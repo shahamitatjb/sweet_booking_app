@@ -44,7 +44,12 @@ Open http://localhost:3000
 
 1. Push this repo to GitHub.
 2. Create a **Neon** project (free). Note host, database, user and password.
-3. Render → **New + Blueprint** → select the repo. `render.yaml` creates `jb-frontend` and `jb-api`.
+3. Render → **New + Blueprint** → select the repo. `render.yaml` creates `jb-frontend` (Node runtime,
+   root dir `frontend`) and `jb-api` (**Docker** runtime — Render has no native Java runtime; the
+   multi-stage `backend/Dockerfile` runs the Maven build on Render, so nothing is built locally).
+   Creating the services by hand instead: for `jb-api` choose **Docker**, Dockerfile path
+   `./backend/Dockerfile`, Docker build context `./backend`; for `jb-frontend` choose **Node**,
+   root directory `frontend`, build `npm ci && npm run build`, start `npm start`.
 4. Fill the `sync: false` env vars on `jb-api`: `DATABASE_URL` (`jdbc:postgresql://<host>/<db>?sslmode=require`),
    `DATABASE_USERNAME`, `DATABASE_PASSWORD`, `BOOTSTRAP_ADMIN_EMAILS`, `FRONTEND_ORIGIN`
    (`https://<jb-frontend host>`), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `EMAIL_FROM`, `RESEND_API_KEY`,

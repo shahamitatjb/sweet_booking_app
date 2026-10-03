@@ -18,8 +18,9 @@ services:
     name: jb-frontend
     runtime: node
     plan: free          # production: starter or standard
-    buildCommand: cd frontend && npm ci && npm run build
-    startCommand: cd frontend && npm start
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
     healthCheckPath: /
     envVars:
       - key: NODE_ENV
@@ -28,13 +29,14 @@ services:
         # jb-api URL from the Render dashboard, e.g. https://jb-api-xxxx.onrender.com
         sync: false
 
-  # Spring Boot API
+  # Spring Boot API — Render has no native Java runtime, so this is a Docker service.
+  # backend/Dockerfile is multi-stage: Maven builds the jar, then a slim JRE image runs it.
   - type: web
     name: jb-api
-    runtime: java
+    runtime: docker
     plan: free          # production: starter (min) or standard for the booking window
-    buildCommand: cd backend && mvn -q -DskipTests package
-    startCommand: cd backend && java -Xmx350m -Xss512k -XX:+UseContainerSupport -XX:TieredStopAtLevel=1 -XX:+UseSerialGC -Dspring.jmx.enabled=false -jar target/jb-api-0.1.0.jar
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
     healthCheckPath: /api/health
     envVars:
       - key: SPRING_PROFILES_ACTIVE
