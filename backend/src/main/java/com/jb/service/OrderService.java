@@ -32,6 +32,16 @@ public class OrderService {
         return create(lines, customer, Order.Channel.online, null, acceptedTerms);
     }
 
+    /** The gateway order exists; remember its id so the webhook can find us, and wait for payment. */
+    @Transactional
+    public Order markAwaitingPayment(Order order, String gatewayOrderId) {
+        order.setGatewayOrderId(gatewayOrderId);
+        order.setStatus(Order.Status.awaiting_payment);
+        Order saved = orderRepository.save(order);
+        log.info("[BOOKING] order {} awaiting_payment gatewayOrderId={}", saved.getId(), gatewayOrderId);
+        return saved;
+    }
+
     @Transactional
     public Order createCounterOrder(List<CartLine> lines, Customer customer, Order.PaymentMethod method, Long staffId) {
         return create(lines, customer, Order.Channel.counter, method, true);

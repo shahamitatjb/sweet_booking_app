@@ -52,6 +52,14 @@ public class BookingFinalizeService {
                             Long staffId) {
         log.info("[BOOKING] finalize start: orderId={} method={} amountPaise={} gatewayPaymentId={} staffId={}",
                 orderId, method, amountPaise, gatewayPaymentId, staffId);
+        // Lock first: the webhook and the browser callback can arrive together for one order. Whoever
+        // waits here re-reads the order and booking after the winner committed, and returns the
+        // existing booking instead of tripping the bookings.order_id unique constraint.
+        Counter counter = counterRepository.findForUpdate(COUNTER_BOOKING)
+                .orElseThrow(() -> {
+                    log.error("[BOOKING] finalize aborted: counter row '{}' missing", COUNTER_BOOKING);
+                    return new IllegalStateException("Counter row missing");
+                });
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> {
                     log.warn("[BOOKING] finalize rejected: order not found {}", orderId);
@@ -75,11 +83,6 @@ public class BookingFinalizeService {
             throw new IllegalStateException("Amount mismatch for order " + orderId);
         }
 
-        Counter counter = counterRepository.findForUpdate(COUNTER_BOOKING)
-                .orElseThrow(() -> {
-                    log.error("[BOOKING] finalize aborted: counter row '{}' missing", COUNTER_BOOKING);
-                    return new IllegalStateException("Counter row missing");
-                });
         long prev = counter.getValue();
         long next = prev + 1;
         counter.setValue(next);

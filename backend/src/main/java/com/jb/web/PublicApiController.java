@@ -166,6 +166,7 @@ public class PublicApiController {
                 return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                         .body(Map.of("error", e.getMessage(), "orderId", order.getId().toString()));
             }
+            order = orderService.markAwaitingPayment(order, String.valueOf(gw.get("gatewayOrderId")));
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("orderId", order.getId().toString());
             out.put("amountPaise", order.getTotalAmount());

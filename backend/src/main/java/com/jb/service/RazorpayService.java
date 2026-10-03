@@ -63,6 +63,23 @@ public class RazorpayService {
         }
     }
 
+    /** Checkout callback check: HMAC-SHA256 of "order_id|payment_id" with the key secret. */
+    public boolean verifyPaymentSignature(String gatewayOrderId, String paymentId, String signature) {
+        if (!enabled() || signature == null || signature.isBlank()) {
+            return false;
+        }
+        try {
+            JSONObject attrs = new JSONObject();
+            attrs.put("razorpay_order_id", gatewayOrderId);
+            attrs.put("razorpay_payment_id", paymentId);
+            attrs.put("razorpay_signature", signature);
+            return com.razorpay.Utils.verifyPaymentSignature(attrs, keySecret);
+        } catch (Exception e) {
+            log.error("[PAY] payment signature verify error for gatewayOrderId={}", gatewayOrderId, e);
+            return false;
+        }
+    }
+
     public boolean verifyWebhookSignature(String body, String signatureHeader) {
         if (webhookSecret == null || webhookSecret.isBlank()) {
             log.warn("[PAY] Webhook secret missing — rejecting webhook (bodyBytes={})",

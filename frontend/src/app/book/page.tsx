@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { t, type Lang } from '../../i18n/dicts';
 import { api, ApiError, formatINR } from '../../lib/format';
+import { buildCheckoutOptions, loadRazorpayScript, openCheckout, type CheckoutSuccess } from '../../lib/razorpay';
 import {
   CUSTOMER_FIELDS,
   validateCustomer,
@@ -35,6 +37,10 @@ type Config = {
 
 type Errors = Partial<Record<FieldName, string>>;
 type OtpState = { code: string; sent: boolean; destination: string; devCode: string };
+/** Order held across payment attempts: a dismissed or failed checkout reuses the same gateway order. */
+type HeldOrder = { orderId: string; amountPaise: number; gateway?: { keyId?: string; gatewayOrderId?: string } };
+/** Razorpay reported success but our verify call has not succeeded yet: money is taken, never re-open checkout. */
+type PendingConfirm = { orderId: string; result: CheckoutSuccess };
 
 const EMPTY_FORM: CustomerForm = { name: '', mobile: '', email: '', address: '', pinCode: '' };
 const NO_OTP: OtpState = { code: '', sent: false, destination: '', devCode: '' };
@@ -43,6 +49,7 @@ const DEFAULT_MAX_TOTAL = 50;
 const STEPS = 3;
 
 export default function BookPage() {
+  const router = useRouter();
   const [lang, setLang] = useState<Lang>('en');
   const [cfg, setCfg] = useState<Config | null>(null);
   const [step, setStep] = useState(1);
@@ -54,6 +61,8 @@ export default function BookPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
+  const [heldOrder, setHeldOrder] = useState<HeldOrder | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
 
   useEffect(() => {
     setLang((localStorage.getItem('jb_lang') as Lang) || 'en');
@@ -94,6 +103,7 @@ export default function BookPage() {
   /** Re-check a field only once it has shown an error, so messages clear as the user types. */
   function setField(field: keyof CustomerForm, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
+    setHeldOrder(null);
     if (errors[field]) {
       setErrors((prev) => ({ ...prev, [field]: validateField(field, value, fieldOpts) ?? undefined }));
     }
@@ -145,27 +155,87 @@ export default function BookPage() {
     }
   }
 
-  async function pay() {
+  async function createOrder(): Promise<HeldOrder> {
+    const order = await api<HeldOrder>('/api/public/orders', {
+      method: 'POST',
+      body: JSON.stringify({ items: lines, ...form, acceptedTerms: accepted, otpCode: otp.code }),
+    });
+    setHeldOrder(order);
+    return order;
+  }
+
+  async function confirmPayment(pending: PendingConfirm) {
     setBusy(true);
     setError('');
-    setInfo('');
+    setInfo(t(lang, 'paymentVerifying'));
     try {
-      const order = await api<{ orderId: string; amountPaise: number; gateway?: { keyId?: string } }>(
-        '/api/public/orders',
-        {
-          method: 'POST',
-          body: JSON.stringify({ items: lines, ...form, acceptedTerms: accepted, otpCode: otp.code }),
+      const done = await api<{ bookingId: string; receiptUrl: string }>('/api/public/payments/verify', {
+        method: 'POST',
+        body: JSON.stringify({ orderId: pending.orderId, ...pending.result }),
+      });
+      router.push(done.receiptUrl || `/receipt/${done.bookingId}`);
+    } catch (e) {
+      setInfo('');
+      showApiError(e);
+      setBusy(false);
+    }
+  }
+
+  /** Resolves true when the Razorpay window is open and owns the busy flag until it closes. */
+  async function openPayment(): Promise<boolean> {
+    if (!cfg) return false;
+    const order = heldOrder ?? (await createOrder());
+    const keyId = order.gateway?.keyId;
+    const gatewayOrderId = order.gateway?.gatewayOrderId;
+    if (!keyId || !gatewayOrderId) {
+      setError(t(lang, 'paymentNotConfigured'));
+      return false;
+    }
+    if (!(await loadRazorpayScript())) {
+      setError(t(lang, 'paymentScriptBlocked'));
+      return false;
+    }
+    openCheckout(
+      buildCheckoutOptions({
+        keyId,
+        gatewayOrderId,
+        amountPaise: order.amountPaise,
+        title: cfg.title,
+        description: t(lang, 'paymentDescription'),
+        customer: { name: form.name, mobile: form.mobile, email: form.email },
+        onSuccess: (result) => {
+          const pending = { orderId: order.orderId, result };
+          setPendingConfirm(pending);
+          void confirmPayment(pending);
         },
-      );
-      // Scaffold: with Razorpay keys the hosted checkout opens here using order.gateway.keyId.
-      setInfo(
-        `${t(lang, 'orderCreated')}: ${order.orderId} · ${formatINR(order.amountPaise)}. ` +
-          (order.gateway ? 'Razorpay checkout would open here.' : t(lang, 'paymentNotConfigured')),
-      );
+        onDismiss: () => {
+          setBusy(false);
+          setError('');
+          setInfo(t(lang, 'paymentCancelled'));
+        },
+      }),
+      () => setError(t(lang, 'paymentFailed')),
+    );
+    return true;
+  }
+
+  async function pay() {
+    // A captured payment whose confirmation failed (network blip) is retried, never re-charged.
+    if (pendingConfirm) {
+      await confirmPayment(pendingConfirm);
+      return;
+    }
+    setBusy(true);
+    setError('');
+    setInfo(t(lang, 'paymentOpening'));
+    let checkoutOpen = false;
+    try {
+      checkoutOpen = await openPayment();
     } catch (e) {
       showApiError(e);
     } finally {
-      setBusy(false);
+      setInfo('');
+      if (!checkoutOpen) setBusy(false);
     }
   }
 
@@ -225,7 +295,10 @@ export default function BookPage() {
                       value={q}
                       max={limits.maxPerItem}
                       label={item.name}
-                      onChange={(n) => setQty((prev) => ({ ...prev, [item.id]: n }))}
+                      onChange={(n) => {
+                        setQty((prev) => ({ ...prev, [item.id]: n }));
+                        setHeldOrder(null);
+                      }}
                     />
                     {q > 0 && (
                       <div className="line-total">
