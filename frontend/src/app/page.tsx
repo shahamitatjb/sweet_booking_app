@@ -41,7 +41,6 @@ export default function HomePage() {
         <div className="card hero">
           <Diya size={64} />
           <h1>{cfg.title}</h1>
-          <p className="muted">{t(lang, 'pickupOnly')}</p>
           {cfg.notice && <p>{cfg.notice}</p>}
           {cfg.bookingEnabled === false && <div className="card error flat">{t(lang, 'bookingClosed')}</div>}
           <div className="cta">
