@@ -23,8 +23,8 @@ services:
     startCommand: npm start
     healthCheckPath: /
     envVars:
-      - key: NODE_ENV
-        value: production
+      # Do NOT set NODE_ENV here: with NODE_ENV=production `npm ci` skips devDependencies
+      # (typescript, @types/*) and `next build` fails. Next sets production mode itself.
       - key: API_PROXY_TARGET
         # jb-api URL from the Render dashboard, e.g. https://jb-api-xxxx.onrender.com
         sync: false
@@ -42,7 +42,11 @@ services:
       - key: SPRING_PROFILES_ACTIVE
         value: prod
       - key: DATABASE_URL
-        sync: false        # jdbc:postgresql://<neon-host>/<db>?sslmode=require
+        # JDBC form WITHOUT credentials in the URL (the driver rejects user:pass@host):
+        #   Render Postgres (same region, internal host): jdbc:postgresql://<dpg-xxxx-a>:5432/<db>
+        #   Neon:                                         jdbc:postgresql://<neon-host>/<db>?sslmode=require
+        # Put the user and password in DATABASE_USERNAME / DATABASE_PASSWORD below.
+        sync: false
       - key: DATABASE_USERNAME
         sync: false
       - key: DATABASE_PASSWORD
