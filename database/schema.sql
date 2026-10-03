@@ -215,16 +215,16 @@ $$ LANGUAGE SQL IMMUTABLE;
 INSERT INTO settings (key, language, value) VALUES
   ('title', 'en', 'Diwali Sweets Booking'),
   ('subtitle', 'en', 'Community Trust — Pune'),
-  ('notice', 'en', 'Book your Diwali sweets online. Pickup only. Limited window.'),
+  ('notice', 'en', 'Book your Diwali sweets online. Collection is from [venue] on the announced pickup dates. Please arrange your own transport; there is no home delivery.'),
   ('terms', 'en',
-    E'Pickup dates and time will be confirmed separately.\nParcels delivered by courier are not our responsibility after the prescribed dates.\nNo cancellations.\nNo refunds except automatic refund of failed technical payments.\nPlease collect sweets on the scheduled pickup dates only.'),
+    E'Pickup dates and time will be confirmed separately.\nSweets are collected from [venue]; you arrange your own transport. We are not responsible for parcels after the prescribed pickup dates.\nNo cancellations.\nNo refunds except automatic refund of failed technical payments.\nPlease collect sweets on the scheduled pickup dates only.'),
   ('thank_you', 'en', 'Thank you for your continued support'),
   ('booking_window_open', 'en', '2026-10-02T00:00:00+05:30'),
   ('booking_window_close', 'en', '2026-10-18T23:59:59+05:30'),
   ('booking_enabled', 'en', 'true'),
-  ('allowed_pins', 'en', '411001-411062'),
   ('max_packets_per_item', 'en', '20'),
   ('max_packets_total', 'en', '50'),
   ('otp_provider', 'en', 'email'),
+  ('otp_required', 'en', 'false'),
   ('privacy_notice', 'en',
-    'We collect your name, mobile, email (optional), address and pin code only to process this booking and issue your receipt. Contact the trust to request deletion after the festival.');
+    'We collect your name, mobile, email (optional), address and pin code only to process this booking and issue your receipt.');

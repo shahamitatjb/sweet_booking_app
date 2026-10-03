@@ -76,24 +76,18 @@ public class SettingsService {
         return true;
     }
 
-    public boolean isPinAllowed(String pin) {
-        String list = getOrDefault("allowed_pins", "en", "411001-411062");
-        for (String part : list.split(",")) {
-            part = part.trim();
-            if (part.contains("-")) {
-                String[] b = part.split("-");
-                if (b.length == 2) {
-                    int p = Integer.parseInt(pin);
-                    int from = Integer.parseInt(b[0].trim());
-                    int to = Integer.parseInt(b[1].trim());
-                    if (p >= from && p <= to) return true;
-                }
-            } else if (part.equals(pin)) {
-                return true;
-            }
-        }
-        return false;
+
+    /** Admin switch for customer OTP verification; off unless explicitly set to true. */
+    public boolean otpRequired() {
+        return Boolean.parseBoolean(getOrDefault("otp_required", "en", "false"));
     }
+
+    /** OTP goes by SMS to the mobile when the provider is sms, otherwise by email. */
+    public OtpService.Channel otpChannel() {
+        return "sms".equalsIgnoreCase(getOrDefault("otp_provider", "en", "email"))
+                ? OtpService.Channel.sms : OtpService.Channel.email;
+    }
+
 
     public int maxPacketsPerItem() {
         return Integer.parseInt(getOrDefault("max_packets_per_item", "en", "20"));

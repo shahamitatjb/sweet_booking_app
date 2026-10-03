@@ -47,7 +47,6 @@ public class OrderService {
             throw reject(channel, "Booking window is closed");
         }
         validateCustomer(customer);
-        validatePins(customer.pinCode());
 
         if (lines == null || lines.isEmpty()) {
             throw reject(channel, "At least one packet required");
@@ -134,27 +133,32 @@ public class OrderService {
     }
 
     public void validateCustomer(Customer c) {
-        if (c.name() == null || c.name().trim().length() < 3) {
-            throw new IllegalArgumentException("Name must be at least 3 characters");
-        }
-        if (c.mobile() == null || !c.mobile().matches("[6-9]\\d{9}")) {
-            throw new IllegalArgumentException("Mobile must be 10 digits starting 6-9");
-        }
-        if (c.address() == null || c.address().trim().length() < 10) {
-            throw new IllegalArgumentException("Address must be at least 10 characters");
-        }
-        if (c.pinCode() == null || !c.pinCode().matches("\\d{6}")) {
-            throw new IllegalArgumentException("Pin code must be 6 digits");
-        }
-        if (c.email() != null && !c.email().isBlank() && !c.email().matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")) {
-            throw new IllegalArgumentException("Invalid email");
-        }
+        validateCustomer(c, false);
     }
 
-    public void validatePins(String pin) {
-        if (!settingsService.isPinAllowed(pin)) {
-            log.warn("[BOOKING] pin code rejected (not in allowed Pune/PCMC list): {}", pin);
-            throw new IllegalArgumentException("Pin code not in allowed Pune/PCMC list");
+    /** Field-level rules mirrored by the booking form; email is only mandatory when OTP goes by email. */
+    public void validateCustomer(Customer c, boolean emailRequired) {
+        if (c == null) {
+            throw new FieldValidationException("name", "Customer details required");
+        }
+        if (c.name() == null || c.name().trim().length() < 3) {
+            throw new FieldValidationException("name", "Name must be at least 3 characters");
+        }
+        if (c.mobile() == null || !c.mobile().matches("[6-9]\\d{9}")) {
+            throw new FieldValidationException("mobile", "Mobile must be 10 digits starting 6-9");
+        }
+        if (c.address() == null || c.address().trim().length() < 10) {
+            throw new FieldValidationException("address", "Address must be at least 10 characters");
+        }
+        if (c.pinCode() == null || !c.pinCode().matches("\\d{6}")) {
+            throw new FieldValidationException("pinCode", "Pin code must be 6 digits");
+        }
+        boolean emailBlank = c.email() == null || c.email().isBlank();
+        if (emailRequired && emailBlank) {
+            throw new FieldValidationException("email", "Email is required for OTP verification");
+        }
+        if (!emailBlank && !c.email().matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")) {
+            throw new FieldValidationException("email", "Invalid email");
         }
     }
 

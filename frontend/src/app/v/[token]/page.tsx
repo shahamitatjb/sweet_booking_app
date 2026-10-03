@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { AppHeader } from '../../../components/AppHeader';
 
 type VerifyResult = {
   status: 'genuine' | 'invalid';
@@ -22,29 +23,30 @@ export default function VerifyPage({ params }: { params: { token: string } }) {
       .catch(() => setResult({ status: 'invalid', message: 'Invalid receipt' }));
   }, [token]);
 
-  if (!result) return <main className="container">Checking…</main>;
-
   return (
-    <main className="container">
-      <div className="card">
-        <h1 style={{ color: result.status === 'genuine' ? 'var(--ok)' : 'var(--err)' }}>
-          {result.message}
-        </h1>
-        {result.bookingId && (
-          <p>
-            <strong>Booking ID:</strong> {result.bookingId}
-          </p>
+    <>
+      <AppHeader title="Receipt verification" backHref="/" />
+      <main className="container">
+        {!result ? (
+          <p className="muted">Checking…</p>
+        ) : (
+          <div className={`card ${result.status === 'genuine' ? 'ok' : 'error'}`}>
+            <h2 style={{ color: 'inherit' }}>{result.message}</h2>
+            {result.bookingId && (
+              <p>
+                <strong>Booking ID:</strong> {result.bookingId}
+              </p>
+            )}
+            {typeof result.totalPackets === 'number' && (
+              <p>
+                <strong>Total packets:</strong> {result.totalPackets}
+              </p>
+            )}
+            {result.warning && <p className="error">{result.warning}</p>}
+          </div>
         )}
-        {typeof result.totalPackets === 'number' && (
-          <p>
-            <strong>Total packets:</strong> {result.totalPackets}
-          </p>
-        )}
-        {result.warning && <p className="error">{result.warning}</p>}
-        <p className="muted">
-          Full customer details are shown only to signed-in committee staff.
-        </p>
-      </div>
-    </main>
+        <p className="muted small">Full customer details are shown only to signed-in committee staff.</p>
+      </main>
+    </>
   );
 }

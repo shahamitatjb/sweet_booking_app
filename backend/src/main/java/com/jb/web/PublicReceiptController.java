@@ -15,6 +15,17 @@ import java.util.Map;
 public class PublicReceiptController {
     private final ReceiptService receiptService;
 
+    @GetMapping(value = "/{bookingId}/qr.png", produces = "image/png")
+    public ResponseEntity<byte[]> qr(@PathVariable String bookingId) {
+        try {
+            return ResponseEntity.ok()
+                    .header("Cache-Control", "public, max-age=86400")
+                    .body(receiptService.qrPng(bookingId));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
     @GetMapping("/{bookingId}")
     public ResponseEntity<?> get(@PathVariable String bookingId) {
         try {

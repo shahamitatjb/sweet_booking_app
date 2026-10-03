@@ -1,43 +1,57 @@
 # Render Blueprint — Diwali Sweets Booking (Mithai)
-# Demo: Free tier (cold starts OK). Production: switch both services to paid
-# and point DATABASE_URL at paid Neon (or Render Postgres) before go-live.
+# Demo: free tier (cold starts OK). Production: switch both services to paid plans
+# in the Render dashboard before the booking window opens.
+#
+# One-time setup after the first deploy:
+#   1. Neon: create a project, copy host/db/user/password into jb-api env vars.
+#      Flyway creates the schema and seed settings on first boot.
+#   2. Google Cloud Console → OAuth client → Authorised redirect URI:
+#        https://<jb-frontend host>/login/oauth2/code/google
+#      (the public site, not the API host).
+#   3. Set FRONTEND_ORIGIN on jb-api to https://<jb-frontend host> and
+#      API_PROXY_TARGET on jb-frontend to the jb-api URL Render shows.
+#   4. Set BOOTSTRAP_ADMIN_EMAILS before the first boot so someone can sign in.
 
 services:
-  # Next.js public + staff UI
+  # Next.js public + staff UI (also proxies /api, /oauth2 and /login/oauth2 to the API)
   - type: web
     name: jb-frontend
     runtime: node
     plan: free          # production: starter or standard
     buildCommand: cd frontend && npm ci && npm run build
     startCommand: cd frontend && npm start
+    healthCheckPath: /
     envVars:
       - key: NODE_ENV
         value: production
-      - key: NEXT_PUBLIC_API_BASE_URL
-        # Browser calls go through Next rewrites to the API service
-        value: /api
       - key: API_PROXY_TARGET
-        # Server-side rewrite target (Render internal URL after first deploy)
+        # jb-api URL from the Render dashboard, e.g. https://jb-api-xxxx.onrender.com
         sync: false
-      - key: PORT
-        value: "10000"
-    healthCheckPath: /api/health
 
   # Spring Boot API
   - type: web
     name: jb-api
     runtime: java
-    plan: free          # production: starter (min) or standard 1c-2g for booking window
+    plan: free          # production: starter (min) or standard for the booking window
     buildCommand: cd backend && mvn -q -DskipTests package
     startCommand: cd backend && java -Xmx350m -Xss512k -XX:+UseContainerSupport -XX:TieredStopAtLevel=1 -XX:+UseSerialGC -Dspring.jmx.enabled=false -jar target/jb-api-0.1.0.jar
+    healthCheckPath: /api/health
     envVars:
       - key: SPRING_PROFILES_ACTIVE
         value: prod
       - key: DATABASE_URL
-        sync: false        # Neon connection string (jdbc:postgresql://...)
+        sync: false        # jdbc:postgresql://<neon-host>/<db>?sslmode=require
       - key: DATABASE_USERNAME
         sync: false
       - key: DATABASE_PASSWORD
+        sync: false
+      - key: BOOTSTRAP_ADMIN_EMAILS
+        sync: false        # comma-separated Google emails; applied only to an empty staff table
+      - key: FRONTEND_ORIGIN
+        sync: false        # https://<jb-frontend host>; drives CORS, cookies, OAuth redirect and receipt links
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
         sync: false
       - key: JWT_SECRET
         generateValue: true
@@ -50,9 +64,9 @@ services:
       - key: RAZORPAY_WEBHOOK_SECRET
         sync: false
       - key: RAZORPAY_MODE
-        value: test       # production: live
+        value: test        # production: live
       - key: OTP_PROVIDER
-        value: email      # production: sms once DLT approved; admin can switch
+        value: email       # sms once an SMS gateway is wired; the admin toggle decides whether OTP is required
       - key: EMAIL_PROVIDER
         value: resend
       - key: EMAIL_FROM
@@ -60,11 +74,4 @@ services:
       - key: RESEND_API_KEY
         sync: false
       - key: RECEIPT_CC_EMAILS
-        sync: false       # comma-separated: Amit Shah, Shailesh bhai
-      - key: FRONTEND_ORIGIN
-        sync: false     # set to https://jb-frontend-xxxx.onrender.com (never "*"; used for CORS + post-login redirects)
-      - key: GOOGLE_CLIENT_ID
-        sync: false
-      - key: GOOGLE_CLIENT_SECRET
-        sync: false
-    healthCheckPath: /api/health
+        sync: false        # comma-separated committee addresses copied on every receipt

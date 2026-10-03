@@ -32,6 +32,7 @@ public class AdminApiController {
     private final StaffRepository staffRepository;
     private final OrderItemStatsRepository statsRepository;
     private final BookingAdminService bookingAdminService;
+    private final BookedByResolver bookedByResolver;
 
     @GetMapping("/dashboard")
     public Map<String, Object> dashboard() {
@@ -142,6 +143,7 @@ public class AdminApiController {
             row.put("amountPaise", o.getTotalAmount());
             row.put("channel", o.getChannel().name());
             row.put("paymentMode", o.getPaymentMethod() == null ? "" : o.getPaymentMethod().name());
+            row.put("takenBy", bookedByResolver.bookedBy(o));
             row.put("status", o.getStatus().name());
             row.put("voidReason", o.getVoidReason() == null ? "" : o.getVoidReason());
             out.add(row);
@@ -176,7 +178,7 @@ public class AdminApiController {
                     o.getTotalAmount(),
                     o.getChannel().name(),
                     o.getPaymentMethod() == null ? "" : o.getPaymentMethod().name(),
-                    o.getCreatedBy() == null ? "" : String.valueOf(o.getCreatedBy())
+                    bookedByResolver.bookedBy(o)
             );
         });
         auditService.recordOutsideTx("excel_export", actorEmail(), actorId(), actorRole(),

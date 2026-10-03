@@ -3,7 +3,9 @@ package com.jb.web;
 import com.jb.domain.*;
 import com.jb.repository.*;
 import com.jb.service.*;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -38,6 +40,25 @@ public class StaffApiController {
         return out;
     }
 
+    /** Ends the staff session: expires the token cookie and records the sign-out. Safe to call twice. */
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout(HttpServletRequest request, HttpServletResponse response) {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getDetails() instanceof Staff s) {
+            auditService.recordOutsideTx("staff_signout", s.getEmail(), s.getId(), s.getRole().name(),
+                    Map.of(), request.getRemoteAddr(), null);
+            log.info("[AUTH] SIGN-OUT: staffId={} email={}", s.getId(), s.getEmail());
+        }
+        Cookie expired = new Cookie("jb_token", "");
+        expired.setHttpOnly(true);
+        expired.setSecure(request.isSecure());
+        expired.setPath("/");
+        expired.setMaxAge(0);
+        response.addCookie(expired);
+        SecurityContextHolder.clearContext();
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/counter/bookings")
     public ResponseEntity<?> counterBooking(@RequestBody Map<String, Object> body, HttpServletRequest request) {
         try {
@@ -47,24 +68,8 @@ public class StaffApiController {
             log.info("[BOOKING] counter booking requested: staffId={} ({}) method={} mobile={}",
                     staff.getId(), staff.getEmail(), method, body.get("mobile"));
 
-            List<OrderService.CartLine> lines = new ArrayList<>();
-            if (body.get("items") instanceof List<?> list) {
-                for (Object o : list) {
-                    if (o instanceof Map<?, ?> m) {
-                        Object qObj = m.get("quantity");
-                        int qty = qObj == null ? 0 : Integer.parseInt(String.valueOf(qObj));
-                        lines.add(new OrderService.CartLine(
-                                Long.parseLong(String.valueOf(m.get("itemId"))),
-                                qty));
-                    }
-                }
-            }
-            OrderService.Customer customer = new OrderService.Customer(
-                    String.valueOf(body.getOrDefault("name", "")),
-                    String.valueOf(body.getOrDefault("mobile", "")),
-                    String.valueOf(body.getOrDefault("address", "")),
-                    String.valueOf(body.getOrDefault("pinCode", "")),
-                    body.get("email") == null ? null : String.valueOf(body.get("email")));
+            List<OrderService.CartLine> lines = RequestParsing.parseLines(body);
+            OrderService.Customer customer = RequestParsing.parseCustomer(body);
 
             Order order = orderService.createCounterOrder(lines, customer, method, staff.getId());
 
@@ -92,13 +97,14 @@ public class StaffApiController {
             out.put("amountPaise", order.getTotalAmount());
             out.put("paymentMethod", method.name());
             out.put("receiptUrl", "/receipt/" + booking.getBookingId());
+            out.put("takenBy", staff.getName() == null || staff.getName().isBlank() ? staff.getEmail() : staff.getName());
             log.info("[BOOKING] counter booking issued by staffId={} ({}): {} -> bookingId={} amountPaise={} method={}",
                     staff.getId(), staff.getEmail(), order.getId(), booking.getBookingId(),
                     order.getTotalAmount(), method);
             return ResponseEntity.ok(out);
         } catch (IllegalArgumentException | IllegalStateException e) {
             log.warn("[BOOKING] counter booking rejected: {}", e.getMessage());
-            return ResponseEntity.badRequest().body(Map.of("error", String.valueOf(e.getMessage())));
+            return ResponseEntity.badRequest().body(RequestParsing.errorBody(e));
         } catch (Exception e) {
             log.error("[BOOKING] counter booking FAILED unexpectedly", e);
             return ResponseEntity.internalServerError()

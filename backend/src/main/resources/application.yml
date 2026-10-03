@@ -19,7 +19,11 @@ spring:
       ddl-auto: validate
     open-in-view: false
   flyway:
-    enabled: false   # schema applied via database/schema.sql on Neon/local; enable for prod if preferred
+    enabled: true
+    # Databases created before Flyway (local Docker) are adopted as version 1; a fresh
+    # Neon database gets V1__schema.sql applied on first boot.
+    baseline-on-migrate: true
+    baseline-version: 1
   security:
     oauth2:
       client:
@@ -28,9 +32,14 @@ spring:
             client-id: ${GOOGLE_CLIENT_ID:placeholder}
             client-secret: ${GOOGLE_CLIENT_SECRET:placeholder}
             scope: openid,email,profile
+            # Google must redirect to the public site (the Next proxy forwards it here) so the
+            # session cookie is set on the origin the browser actually uses.
+            redirect-uri: ${FRONTEND_ORIGIN:http://localhost:3000}/login/oauth2/code/{registrationId}
 
 server:
   port: ${PORT:8080}
+  # Behind Render's TLS proxy and the Next rewrite: honour X-Forwarded-* for scheme and host.
+  forward-headers-strategy: native
 
 management:
   endpoints:
@@ -55,6 +64,7 @@ jb:
   razorpay-key-secret: ${RAZORPAY_KEY_SECRET:}
   razorpay-webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
   booking-enabled-override: ${BOOKING_ENABLED_OVERRIDE:}   # empty = use DB setting
+  bootstrap-admin-emails: ${BOOTSTRAP_ADMIN_EMAILS:}      # comma-separated; used only when the staff table is empty
 
 logging:
   level:

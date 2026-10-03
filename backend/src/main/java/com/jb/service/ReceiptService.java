@@ -6,7 +6,8 @@ import com.jb.domain.OrderItem;
 import com.jb.repository.BookingRepository;
 import com.jb.repository.OrderItemRepository;
 import com.jb.repository.OrderRepository;
-import lombok.RequiredArgsConstructor;
+import com.jb.repository.StaffRepository;
+import com.jb.domain.Staff;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,7 +25,6 @@ import com.openhtmltopdf.svgsupport.BatikSVGDrawer;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class ReceiptService {
     private static final DateTimeFormatter IST =
             DateTimeFormatter.ofPattern("dd MMM yyyy, hh:mm a").withZone(ZoneId.of("Asia/Kolkata"));
@@ -34,6 +34,24 @@ public class ReceiptService {
     private final OrderItemRepository orderItemRepository;
     private final SettingsService settingsService;
     private final QrService qrService;
+    private final StaffRepository staffRepository;
+    private final QrImageService qrImageService;
+    private final String baseUrl;
+
+    public ReceiptService(BookingRepository bookingRepository, OrderRepository orderRepository,
+                          OrderItemRepository orderItemRepository, SettingsService settingsService,
+                          QrService qrService, StaffRepository staffRepository, QrImageService qrImageService,
+                          @org.springframework.beans.factory.annotation.Value("${jb.frontend-origin}") String frontendOrigin) {
+        this.bookingRepository = bookingRepository;
+        this.orderRepository = orderRepository;
+        this.orderItemRepository = orderItemRepository;
+        this.settingsService = settingsService;
+        this.qrService = qrService;
+        this.staffRepository = staffRepository;
+        this.qrImageService = qrImageService;
+        // Verification links must open on the public site, which is the frontend origin.
+        this.baseUrl = frontendOrigin.split(",")[0].trim();
+    }
 
     public Optional<Booking> findByBookingId(String bookingId) {
         return bookingRepository.findByBookingId(bookingId);
@@ -48,9 +66,7 @@ public class ReceiptService {
                 });
         Order order = booking.getOrder();
         List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
-        String verifyUrl = qrService.verificationUrl(
-                System.getenv().getOrDefault("APP_BASE_URL", "http://localhost:3000"),
-                booking.getBookingId(), booking.getQrSignature());
+        String verifyUrl = qrService.verificationUrl(baseUrl, booking.getBookingId(), booking.getQrSignature());
         return new ReceiptView(
                 booking.getBookingId(),
                 booking.getConfirmedAt(),
@@ -65,6 +81,7 @@ public class ReceiptService {
                 order.getPaymentMethod() == null ? null : order.getPaymentMethod().name(),
                 order.getChannel().name(),
                 order.getCreatedBy(),
+                takenByName(order.getCreatedBy()),
                 settingsService.getOrDefault("terms", "en", ""),
                 settingsService.getOrDefault("thank_you", "en", "Thank you for your continued support"),
                 settingsService.getOrDefault("title", "en", "Diwali Sweets Booking"),
@@ -73,6 +90,21 @@ public class ReceiptService {
                 order.getStatus().name(),
                 order.getVoidReason()
         );
+    }
+
+    /** Display name of the staff member who issued a counter booking; falls back to their email. */
+    private String takenByName(Long staffId) {
+        if (staffId == null) return null;
+        return staffRepository.findById(staffId)
+                .map(s -> s.getName() == null || s.getName().isBlank() ? s.getEmail() : s.getName())
+                .orElse(null);
+    }
+
+    /** PNG QR of the signed verification link; only for bookings that exist. */
+    public byte[] qrPng(String bookingId) {
+        Booking booking = bookingRepository.findByBookingId(bookingId)
+                .orElseThrow(() -> new IllegalArgumentException("Booking not found"));
+        return qrImageService.png(qrService.verificationUrl(baseUrl, booking.getBookingId(), booking.getQrSignature()));
     }
 
     public byte[] pdfForBookingId(String bookingId) {
@@ -104,6 +136,10 @@ public class ReceiptService {
         String pii = v.name() == null ? "" :
                 "<p><strong>Name:</strong> " + esc(v.name()) + "<br/><strong>Mobile:</strong> " + esc(v.mobile()) +
                 "<br/><strong>Address:</strong> " + esc(v.address()) + " — " + esc(v.pin()) + "</p>";
+        String qr = "<img class=\"qr\" alt=\"Verification QR\" src=\"data:image/png;base64,"
+                + java.util.Base64.getEncoder().encodeToString(qrImageService.png(v.verifyUrl())) + "\"/>";
+        String takenBy = v.takenByName() == null ? "" :
+                "<br/><strong>Booked by:</strong> " + esc(v.takenByName());
         String cancelled = !"voided".equals(v.status()) ? "" :
                 "<p style=\"border:2px solid #b00000;font-weight:bold;padding:6px;\">CANCELLED"
                         + (v.voidReason() == null || v.voidReason().isBlank() ? "" : " — " + esc(v.voidReason()))
@@ -115,14 +151,15 @@ public class ReceiptService {
               h1 { font-size: 16px; margin: 0 0 4px 0; }
               table { width: 100%%; border-collapse: collapse; margin-top: 8px; }
               td, th { border: 1px solid #000; padding: 4px; text-align: left; }
-              .qr { width: 3cm; height: 3cm; }
+              .qr { width: 3cm; height: 3cm; float: right; margin: 0 0 4px 6px; }
               .muted { color: #333; font-size: 10px; }
             </style></head><body>
               <h1>%s</h1>
               %s
+              %s
               <p><strong>Booking ID:</strong> %s<br/>
               <strong>Booked at (IST):</strong> %s<br/>
-              <strong>Channel:</strong> %s · <strong>Payment:</strong> %s</p>
+              <strong>Channel:</strong> %s · <strong>Payment:</strong> %s%s</p>
               %s
               <table><tr><th>Item</th><th>Pack</th><th>Packets</th><th>Amount</th></tr>%s</table>
               <p><strong>Total packets:</strong> %d<br/><strong>Total:</strong> %s</p>
@@ -131,8 +168,8 @@ public class ReceiptService {
               <p>%s</p>
             </body></html>
             """.formatted(
-                esc(v.title()), cancelled, esc(v.bookingId()), esc(v.bookedAtIst()),
-                esc(v.channel()), esc(v.paymentMode() == null ? "-" : v.paymentMode()),
+                esc(v.title()), cancelled, qr, esc(v.bookingId()), esc(v.bookedAtIst()),
+                esc(v.channel()), esc(v.paymentMode() == null ? "-" : v.paymentMode()), takenBy,
                 pii, lines, v.totalPackets(), formatPaise(v.totalAmount()),
                 esc(v.verifyUrl()), esc(v.signature()), esc(v.terms()), esc(v.thankYou()));
     }
@@ -164,6 +201,7 @@ public class ReceiptService {
             String paymentMode,
             String channel,
             Long takenBy,
+            String takenByName,
             String terms,
             String thankYou,
             String title,

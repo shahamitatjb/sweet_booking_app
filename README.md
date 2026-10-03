@@ -40,19 +40,23 @@ API_PROXY_TARGET=http://localhost:8080 npm run dev
 
 Open http://localhost:3000
 
-## Demo on Render free
+## Deploy on Render (free tier for testing)
 
 1. Push this repo to GitHub.
-2. Create a Render account → **New + Blueprint** → select repo → uses `render.yaml`.
-3. Create **Neon** free project; copy the Postgres URL.
-4. Set env vars on `jb-api` (see `.env.example`). Minimum for demo:
-   - `DATABASE_URL`, `DATABASE_USERNAME`, `DATABASE_PASSWORD`
-   - `OTP_PROVIDER=dev`, `EMAIL_PROVIDER=console`
-   - `JWT_SECRET`, `QR_HMAC_SECRET` (long random strings)
-5. Deploy. First deploy is slow (Maven + Node build).
-6. After deploy, set `API_PROXY_TARGET` on `jb-frontend` to the **internal** `jb-api` URL Render shows (e.g. `http://jb-api-xxxx:8080`), or the public API URL if rewrites need it.
+2. Create a **Neon** project (free). Note host, database, user and password.
+3. Render → **New + Blueprint** → select the repo. `render.yaml` creates `jb-frontend` and `jb-api`.
+4. Fill the `sync: false` env vars on `jb-api`: `DATABASE_URL` (`jdbc:postgresql://<host>/<db>?sslmode=require`),
+   `DATABASE_USERNAME`, `DATABASE_PASSWORD`, `BOOTSTRAP_ADMIN_EMAILS`, `FRONTEND_ORIGIN`
+   (`https://<jb-frontend host>`), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `EMAIL_FROM`, `RESEND_API_KEY`,
+   `RECEIPT_CC_EMAILS`. On `jb-frontend` set `API_PROXY_TARGET` to the `jb-api` URL.
+5. Google Cloud Console → the OAuth client → add the redirect URI
+   `https://<jb-frontend host>/login/oauth2/code/google`. Locally the equivalent is
+   `http://localhost:3000/login/oauth2/code/google` (the callback goes through the Next proxy).
+6. Deploy. Flyway applies `V1__schema.sql` to the empty Neon database and the bootstrap admins are
+   inserted. Sign in with one of them, add staff and items, set the booking window and texts.
 
-**Free-tier caveats (important):** services sleep after 15 min; Spring Boot cold start can be 30s–2min; free Render Postgres expires in 30 days — use **Neon**, not free Render Postgres, for any data you care about.
+**Free-tier caveats:** services sleep after 15 min; Spring Boot cold start can be 30s–2min; free Render
+Postgres expires in 30 days, which is why Neon is used.
 
 ## Production (booking window)
 
@@ -63,6 +67,7 @@ Open http://localhost:3000
 | Razorpay | Trust merchant account + live keys; webhook URL `https://<api>/api/webhooks/razorpay` |
 | OTP | Set `OTP_PROVIDER=sms` only after DLT + provider live; until then **email OTP** (admin setting `otp_provider`) |
 | Email | Resend (or similar) + real from-domain; set `RECEIPT_CC_EMAILS` to Amit Shah + Shailesh bhai |
+| Admins | `BOOTSTRAP_ADMIN_EMAILS` only seeds an empty staff table; manage the rest in Admin → Settings |
 | Google | OAuth client; add staff emails via Admin UI or `database/seed.sql` |
 | Catalogue | Admin confirms item list; set booking window; fill Hindi/Gujarati texts |
 | Domain | Optional later; needed for professional email deliverability |
@@ -73,7 +78,8 @@ Open http://localhost:3000
 - **Payments:** Razorpay hosted checkout; counter **cash** and **staff-confirmed UPI** (no dynamic QR in v1 — authenticity weaker; audited).
 - **WhatsApp:** deferred; **email** to customer (if provided) + configured trustee alert emails + receipt PDF CC list.
 - **OTP:** provider-pluggable; production blocked for SMS until DLT; email OTP interim allowed via settings.
-- **Receipts:** immutable; print CSS `@page { size: 14.9cm 21cm; margin: 0 }`; QR HMAC verification at `/v/...`.
+- **Receipts:** immutable; print CSS `@page { size: 14.9cm 21cm; margin: 0 }`; signed QR image + verification at `/v/...`.
+- **Area:** no pin-code restriction; collection is from a fixed venue (set in the notice/terms texts).
 - **Export:** admin Excel with blank **Handed over** column.
 - **Audit:** append-only table (UPDATE/DELETE blocked in DB).
 - **PII:** retention “keep indefinitely” (trust decision) — revisit with legal for DPDP.

@@ -14,6 +14,11 @@ const nextConfig = {
         source: '/oauth2/:path*',
         destination: `${apiTarget}/oauth2/:path*`,
       },
+      {
+        // Google redirects here after sign-in; proxying it keeps the session cookie on this origin.
+        source: '/login/oauth2/:path*',
+        destination: `${apiTarget}/login/oauth2/:path*`,
+      },
     ];
   },
 };

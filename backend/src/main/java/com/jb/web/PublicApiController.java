@@ -48,6 +48,9 @@ public class PublicApiController {
         out.put("thankYou", texts.getOrDefault("thank_you", "Thank you for your continued support"));
         out.put("privacyNotice", texts.getOrDefault("privacy_notice", ""));
         out.put("maxPerItem", settingsService.maxPacketsPerItem());
+        out.put("maxTotal", settingsService.maxPacketsTotal());
+        out.put("otpRequired", settingsService.otpRequired());
+        out.put("otpChannel", settingsService.otpChannel().name());
         out.put("bookingEnabled", settingsService.withinWindow(now));
         out.put("windowOpen", settingsService.windowOpen() == null ? "" : settingsService.windowOpen().toString());
         out.put("windowClose", settingsService.windowClose() == null ? "" : settingsService.windowClose().toString());
@@ -55,39 +58,34 @@ public class PublicApiController {
         return out;
     }
 
+    /**
+     * Sends an OTP when the admin has switched verification on. The server picks the
+     * channel from the OTP provider setting: SMS to the mobile, otherwise email.
+     */
     @PostMapping("/otp/request")
-    public ResponseEntity<?> requestOtp(@RequestBody Map<String, String> body) {
-        String destination = body.getOrDefault("destination", "");
-        String channelRaw = body.getOrDefault("channel", "email");
-        OtpService.Channel channel;
-        try {
-            // enum constants are lowercase (sms|email|dev)
-            channel = OtpService.Channel.valueOf(channelRaw.trim().toLowerCase());
-        } catch (Exception e) {
-            log.warn("[OTP] unknown channel '{}' requested — falling back to email", channelRaw);
-            channel = OtpService.Channel.email;
+    public ResponseEntity<?> requestOtp(@RequestBody Map<String, Object> body) {
+        if (!settingsService.otpRequired()) {
+            log.warn("[OTP] request ignored: otp_required is off");
+            return ResponseEntity.badRequest().body(Map.of("error", "OTP verification is not enabled"));
         }
-        String provider = settingsService.getOrDefault("otp_provider", "en", "email");
-        if (channel == OtpService.Channel.sms && !"sms".equalsIgnoreCase(provider)) {
-            log.warn("[OTP] SMS requested but otp_provider={} — 503 returned", provider);
-            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                    .body(Map.of("error", "SMS OTP not enabled yet. Use email OTP."));
-        }
+        OtpService.Channel channel = settingsService.otpChannel();
+        String destination = channel == OtpService.Channel.sms
+                ? RequestParsing.str(body, "mobile") : RequestParsing.str(body, "email");
         try {
-            log.info("[OTP] issuing {} OTP to {} (provider={})", channel, destination, provider);
-            var issued = otpService.issue(destination, channel);
+            log.info("[OTP] issuing {} OTP", channel);
+            var issued = otpService.issue(destination == null ? "" : destination, channel);
             Map<String, Object> resp = new HashMap<>();
             resp.put("channel", issued.channel());
             resp.put("destination", issued.destination());
             if (issued.devCode() != null) {
                 resp.put("devCode", issued.devCode());
             }
-            log.info("[OTP] issued {} OTP to {} (devCodeReturned={})",
-                    issued.channel(), issued.destination(), issued.devCode() != null);
+            log.info("[OTP] issued {} OTP (devCodeReturned={})", issued.channel(), issued.devCode() != null);
             return ResponseEntity.ok(resp);
         } catch (IllegalArgumentException e) {
             log.warn("[OTP] request rejected: {}", e.getMessage());
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            String field = channel == OtpService.Channel.sms ? "mobile" : "email";
+            return ResponseEntity.badRequest().body(RequestParsing.errorBody(new FieldValidationException(field, e.getMessage())));
         } catch (IllegalStateException e) {
             log.error("[OTP] request failed (503): {}", e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("error", e.getMessage()));
@@ -97,10 +95,9 @@ public class PublicApiController {
     @PostMapping("/orders/preview")
     public ResponseEntity<?> preview(@RequestBody Map<String, Object> body) {
         try {
-            List<OrderService.CartLine> lines = parseLines(body);
-            OrderService.Customer customer = parseCustomer(body);
-            orderService.validateCustomer(customer);
-            orderService.validatePins(customer.pinCode());
+            List<OrderService.CartLine> lines = RequestParsing.parseLines(body);
+            OrderService.Customer customer = RequestParsing.parseCustomer(body);
+            orderService.validateCustomer(customer, emailRequiredForOtp());
             int maxPer = settingsService.maxPacketsPerItem();
             int maxTotal = settingsService.maxPacketsTotal();
             int packets = 0;
@@ -129,9 +126,9 @@ public class PublicApiController {
             log.info("[BOOKING] preview: packets={} amountPaise={} weightKg={} lines={}",
                     packets, amount, kg, detail.size());
             return ResponseEntity.ok(out);
-        } catch (Exception e) {
+        } catch (RuntimeException e) {
             log.warn("[BOOKING] preview rejected: {}", e.toString());
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ResponseEntity.badRequest().body(RequestParsing.errorBody(e));
         }
     }
 
@@ -147,21 +144,10 @@ public class PublicApiController {
                 log.warn("[BOOKING] create rejected: terms not accepted");
                 return ResponseEntity.badRequest().body(Map.of("error", "Terms must be accepted"));
             }
-            String otpCode = (String) body.getOrDefault("otpCode", "");
-            String otpExpected = (String) body.getOrDefault("otpExpected", "");
-            String mobile = String.valueOf(body.getOrDefault("mobile", ""));
-            if (otpCode == null || otpCode.isBlank()) {
-                log.warn("[BOOKING] create rejected: OTP required for {}", mobile);
-                return ResponseEntity.badRequest().body(Map.of("error", "OTP required"));
-            }
-            if (otpExpected != null && !otpExpected.isBlank() && !otpService.verify(
-                    mobile, OtpService.Channel.email, otpExpected, otpCode)) {
-                log.warn("[BOOKING] create rejected: OTP mismatch for {}", mobile);
-                return ResponseEntity.badRequest().body(Map.of("error", "Invalid OTP"));
-            }
-
-            List<OrderService.CartLine> lines = parseLines(body);
-            OrderService.Customer customer = parseCustomer(body);
+            List<OrderService.CartLine> lines = RequestParsing.parseLines(body);
+            OrderService.Customer customer = RequestParsing.parseCustomer(body);
+            orderService.validateCustomer(customer, emailRequiredForOtp());
+            requireOtpIfEnabled(body, customer);
             log.info("[BOOKING] step 1/3 createOnlineOrder: mobile={} name={} lines={} pin={}",
                     customer.mobile(), customer.name(), lines.size(), customer.pinCode());
             Order order = orderService.createOnlineOrder(lines, customer, true);
@@ -189,7 +175,7 @@ public class PublicApiController {
             return ResponseEntity.ok(out);
         } catch (IllegalArgumentException | IllegalStateException e) {
             log.warn("[BOOKING] createOrder rejected: {}", e.getMessage());
-            return ResponseEntity.badRequest().body(Map.of("error", String.valueOf(e.getMessage())));
+            return ResponseEntity.badRequest().body(RequestParsing.errorBody(e));
         } catch (Exception e) {
             log.error("[BOOKING] createOrder failed unexpectedly (order may already exist)", e);
             return ResponseEntity.internalServerError()
@@ -197,34 +183,23 @@ public class PublicApiController {
         }
     }
 
-    private List<OrderService.CartLine> parseLines(Map<String, Object> body) {
-        List<OrderService.CartLine> lines = new ArrayList<>();
-        Object raw = body.get("items");
-        if (raw instanceof List<?> list) {
-            for (Object o : list) {
-                if (o instanceof Map<?, ?> m) {
-                    long id = Long.parseLong(String.valueOf(m.get("itemId")));
-                    Object qObj = m.get("quantity");
-                    int qty = qObj == null ? 0 : Integer.parseInt(String.valueOf(qObj));
-                    lines.add(new OrderService.CartLine(id, qty));
-                }
-            }
+    private boolean emailRequiredForOtp() {
+        return settingsService.otpRequired() && settingsService.otpChannel() == OtpService.Channel.email;
+    }
+
+    /** With the admin switch on, the typed code must match the one issued to the customer's contact. */
+    private void requireOtpIfEnabled(Map<String, Object> body, OrderService.Customer customer) {
+        if (!settingsService.otpRequired()) return;
+        OtpService.Channel channel = settingsService.otpChannel();
+        String destination = channel == OtpService.Channel.sms ? customer.mobile() : customer.email();
+        String otpCode = RequestParsing.str(body, "otpCode");
+        if (otpCode == null || otpCode.isBlank()) {
+            log.warn("[BOOKING] create rejected: OTP required");
+            throw new FieldValidationException("otp", "OTP required");
         }
-        return lines;
-    }
-
-    private OrderService.Customer parseCustomer(Map<String, Object> body) {
-        return new OrderService.Customer(
-                str(body, "name"),
-                str(body, "mobile"),
-                str(body, "address"),
-                str(body, "pinCode"),
-                str(body, "email")
-        );
-    }
-
-    private String str(Map<String, Object> body, String key) {
-        Object v = body.get(key);
-        return v == null ? null : String.valueOf(v);
+        if (!otpService.verify(destination, channel, otpCode)) {
+            log.warn("[BOOKING] create rejected: OTP mismatch");
+            throw new FieldValidationException("otp", "Invalid or expired OTP");
+        }
     }
 }

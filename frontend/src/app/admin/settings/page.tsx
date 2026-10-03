@@ -2,6 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { api } from '../../../lib/format';
+import { AdminShell } from '../../../components/AdminShell';
+import { useMe } from '../../../components/useMe';
+import { SignInRequired } from '../../../components/SignInRequired';
+import { Toast, useToast } from '../../../components/Toast';
 
 type Field = {
   key: string;
@@ -9,22 +13,30 @@ type Field = {
   type: 'bool' | 'number' | 'text' | 'textarea' | 'datetime' | 'select';
   hint?: string;
   options?: string[];
+  group: 'window' | 'limits' | 'verification' | 'texts';
 };
 
 const FIELDS: Field[] = [
-  { key: 'booking_enabled', label: 'Bookings open', type: 'bool', hint: 'Turn off to stop new bookings without deploying.' },
-  { key: 'booking_window_open', label: 'Window opens', type: 'datetime', hint: 'IST. Leave blank to open immediately.' },
-  { key: 'booking_window_close', label: 'Window closes', type: 'datetime', hint: 'IST. Leave blank to stay open.' },
-  { key: 'max_packets_per_item', label: 'Max packets per item', type: 'number' },
-  { key: 'max_packets_total', label: 'Max packets per booking', type: 'number' },
-  { key: 'allowed_pins', label: 'Allowed pincodes', type: 'text', hint: 'Comma separated: 411001,411005 or a range 411001-411062.' },
-  { key: 'otp_provider', label: 'OTP provider', type: 'select', options: ['email', 'sms'], hint: 'sms stays disabled until an SMS gateway is wired up.' },
-  { key: 'title', label: 'Page title', type: 'text' },
-  { key: 'subtitle', label: 'Subtitle', type: 'text' },
-  { key: 'notice', label: 'Notice on booking page', type: 'textarea' },
-  { key: 'terms', label: 'Terms', type: 'textarea' },
-  { key: 'thank_you', label: 'Thank you note', type: 'textarea' },
-  { key: 'privacy_notice', label: 'Privacy notice', type: 'textarea' },
+  { key: 'booking_enabled', label: 'Bookings open', type: 'bool', group: 'window', hint: 'Turn off to stop new bookings without deploying.' },
+  { key: 'booking_window_open', label: 'Window opens', type: 'datetime', group: 'window', hint: 'IST. Leave blank to open immediately.' },
+  { key: 'booking_window_close', label: 'Window closes', type: 'datetime', group: 'window', hint: 'IST. Leave blank to stay open.' },
+  { key: 'max_packets_per_item', label: 'Max packets per item', type: 'number', group: 'limits' },
+  { key: 'max_packets_total', label: 'Max packets per booking', type: 'number', group: 'limits' },
+  { key: 'otp_required', label: 'Require OTP verification', type: 'bool', group: 'verification', hint: 'Off by default. When on, customers must verify a one-time code before paying.' },
+  { key: 'otp_provider', label: 'OTP channel', type: 'select', options: ['email', 'sms'], group: 'verification', hint: 'sms sends to the mobile number once an SMS gateway is wired up; email sends to the email address and makes it a required field.' },
+  { key: 'title', label: 'Page title', type: 'text', group: 'texts' },
+  { key: 'subtitle', label: 'Subtitle', type: 'text', group: 'texts' },
+  { key: 'notice', label: 'Notice on booking page', type: 'textarea', group: 'texts' },
+  { key: 'terms', label: 'Terms', type: 'textarea', group: 'texts' },
+  { key: 'thank_you', label: 'Thank you note', type: 'textarea', group: 'texts' },
+  { key: 'privacy_notice', label: 'Privacy notice', type: 'textarea', group: 'texts' },
+];
+
+const GROUPS: Array<{ key: Field['group']; title: string; blurb: string }> = [
+  { key: 'window', title: 'Booking window', blurb: 'Controls whether customers can book right now.' },
+  { key: 'limits', title: 'Limits', blurb: 'Packet caps per item and per booking.' },
+  { key: 'verification', title: 'Customer verification', blurb: 'One-time code before online payment.' },
+  { key: 'texts', title: 'Texts shown to customers', blurb: 'English values; Hindi and Gujarati are entered per item and setting later.' },
 ];
 
 const KNOWN_KEYS = new Set(FIELDS.map((f) => f.key));
@@ -62,8 +74,9 @@ function fromInput(v: string): string {
 }
 
 export default function AdminSettingsPage() {
+  const me = useMe();
+  const { toast, show } = useToast();
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
   const [values, setValues] = useState<Record<string, string>>({});
   const [loaded, setLoaded] = useState<Record<string, string>>({});
   const [extraKeys, setExtraKeys] = useState<string[]>([]);
@@ -74,8 +87,7 @@ export default function AdminSettingsPage() {
 
   function flash(msg: string) {
     setError('');
-    setNotice(msg);
-    window.setTimeout(() => setNotice(''), 4000);
+    show(msg);
   }
 
   async function loadAll() {
@@ -96,6 +108,7 @@ export default function AdminSettingsPage() {
       setStaff(await api<StaffRow[]>('/api/admin/staff'));
     } catch (e) {
       setError((e as Error).message);
+      show((e as Error).message, 'err');
     }
   }
 
@@ -120,6 +133,7 @@ export default function AdminSettingsPage() {
       await loadAll();
     } catch (e) {
       setError((e as Error).message);
+      show((e as Error).message, 'err');
     }
   }
 
@@ -133,6 +147,7 @@ export default function AdminSettingsPage() {
       setItems(await api<Item[]>('/api/admin/items'));
     } catch (e) {
       setError((e as Error).message);
+      show((e as Error).message, 'err');
     }
   }
 
@@ -144,6 +159,7 @@ export default function AdminSettingsPage() {
       setStaffDraft({ ...EMPTY_STAFF });
     } catch (e) {
       setError((e as Error).message);
+      show((e as Error).message, 'err');
     }
   }
 
@@ -153,19 +169,23 @@ export default function AdminSettingsPage() {
 
   const dirty = Object.keys(values).some((k) => values[k] !== loaded[k]);
 
-  return (
-    <main className="container" style={{ maxWidth: 960 }}>
-      <h1>Settings</h1>
-      <p>
-        <a href="/admin">← Admin</a>
-      </p>
-      {error && <div className="error">{error}</div>}
-      {notice && <div className="card" style={{ borderColor: 'var(--ok)' }}>{notice}</div>}
+  if (me === undefined) return <main className="container muted">Loading…</main>;
+  if (!me) return <SignInRequired />;
 
-      <div className="card">
-        <h2>Booking</h2>
-        <div className="form">
-          {FIELDS.map((f) => (
+  return (
+    <AdminShell active="settings" title="Settings" me={me}>
+      {error && (
+        <div className="card error" role="alert">
+          {error}
+        </div>
+      )}
+
+      {GROUPS.map((g) => (
+        <section className="card" key={g.key}>
+          <h2>{g.title}</h2>
+          <p className="muted">{g.blurb}</p>
+          <div className="form">
+              {FIELDS.filter((f) => f.group === g.key).map((f) => (
             <label key={f.key}>
               <span>{f.label}</span>
               {f.type === 'bool' ? (
@@ -201,26 +221,35 @@ export default function AdminSettingsPage() {
               {f.hint && <em className="muted">{f.hint}</em>}
             </label>
           ))}
-          {extraKeys.map((k) => (
-            <label key={k}>
-              <span>{k} (extra)</span>
-              <input
-                value={values[k] || ''}
-                onChange={(e) => setValues((v) => ({ ...v, [k]: e.target.value }))}
-              />
-            </label>
-          ))}
-        </div>
-        <p className="muted">Saved values apply to the English site only.</p>
-        <button className="btn" onClick={saveSettings} disabled={!dirty}>
+          </div>
+        </section>
+      ))}
+
+      {extraKeys.length > 0 && (
+        <section className="card">
+          <h2>Other settings</h2>
+          <div className="form">
+            {extraKeys.map((k) => (
+              <label key={k}>
+                <span>{k}</span>
+                <input value={values[k] || ''} onChange={(e) => setValues((v) => ({ ...v, [k]: e.target.value }))} />
+              </label>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <div className="save-bar no-print">
+        <span className="muted">{dirty ? 'You have unsaved changes.' : 'All settings saved.'}</span>
+        <button type="button" className="btn gold" onClick={saveSettings} disabled={!dirty}>
           Save settings
         </button>
       </div>
 
-      <div className="card">
+      <section className="card">
         <h2>Item catalogue</h2>
-        <div style={{ overflowX: 'auto' }}>
-          <table className="admin-table">
+        <div className="table-wrap">
+          <table className="data-table">
             <thead>
               <tr>
                 <th>Name (en)</th>
@@ -358,16 +387,16 @@ export default function AdminSettingsPage() {
           Prices are stored as paise on the API and shown here in rupees. Unchecking Active hides the item
           from booking screens without deleting its history.
         </p>
-      </div>
+      </section>
 
-      <div className="card">
+      <section className="card">
         <h2>Staff</h2>
         <p className="muted">
           Only active staff with an entry here can sign in with Google. Roles: ADMIN sees everything,
           COUNTER can issue counter bookings.
         </p>
-        <div style={{ overflowX: 'auto' }}>
-          <table className="admin-table">
+        <div className="table-wrap">
+          <table className="data-table">
             <thead>
               <tr>
                 <th>Email</th>
@@ -466,7 +495,8 @@ export default function AdminSettingsPage() {
             </tbody>
           </table>
         </div>
-      </div>
-    </main>
+      </section>
+      <Toast toast={toast} />
+    </AdminShell>
   );
 }

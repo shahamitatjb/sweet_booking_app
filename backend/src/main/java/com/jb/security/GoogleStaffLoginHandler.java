@@ -50,6 +50,7 @@ public class GoogleStaffLoginHandler implements AuthenticationSuccessHandler {
                 return;
             }
             Staff s = staff.get();
+            syncProfileName(s, user.getAttributes());
             auditService.recordOutsideTx("staff_signin", s.getEmail(), s.getId(), s.getRole().name(),
                     Map.of(), request.getRemoteAddr(), null);
             String jwt = jwtService.issue(s);
@@ -70,6 +71,29 @@ public class GoogleStaffLoginHandler implements AuthenticationSuccessHandler {
             log.error("[AUTH] SIGN-IN FAILED: unexpected error during Google callback (email={})", email, e);
             redirect(response, "/staff/login?error=failed");
         }
+    }
+
+    /**
+     * Google's profile name is the display name on the counter screen and receipts.
+     * It overwrites whatever an admin typed, so the name always matches the signed-in account.
+     */
+    void syncProfileName(Staff staff, Map<String, Object> attributes) {
+        String name = googleDisplayName(attributes);
+        if (name.isBlank() || name.equals(staff.getName())) return;
+        log.info("[AUTH] staffId={} display name synced from Google: '{}' -> '{}'", staff.getId(), staff.getName(), name);
+        staff.setName(name);
+        staffRepository.save(staff);
+    }
+
+    private static String googleDisplayName(Map<String, Object> attributes) {
+        String full = attr(attributes, "name");
+        if (!full.isBlank()) return full;
+        return (attr(attributes, "given_name") + " " + attr(attributes, "family_name")).trim();
+    }
+
+    private static String attr(Map<String, Object> attributes, String key) {
+        Object v = attributes == null ? null : attributes.get(key);
+        return v == null ? "" : String.valueOf(v).trim();
     }
 
     private void redirect(HttpServletResponse response, String path) throws java.io.IOException {

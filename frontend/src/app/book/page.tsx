@@ -1,17 +1,22 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useMemo, useState } from 'react';
 import { t, type Lang } from '../../i18n/dicts';
-import { api, formatINR } from '../../lib/format';
+import { api, ApiError, formatINR } from '../../lib/format';
+import {
+  CUSTOMER_FIELDS,
+  validateCustomer,
+  validateField,
+  validateQuantities,
+  type CustomerForm,
+  type FieldName,
+} from '../../lib/validators';
+import { AppHeader } from '../../components/AppHeader';
+import { Stepper } from '../../components/Stepper';
+import { QtyStepper } from '../../components/QtyStepper';
+import { Field } from '../../components/Field';
 
-type Item = {
-  id: number;
-  name: string;
-  packSize: string;
-  pricePaise: number;
-  weightKg: number;
-};
+type Item = { id: number; name: string; packSize: string; pricePaise: number; weightKg: number };
 
 type Config = {
   title: string;
@@ -22,270 +27,442 @@ type Config = {
   privacyNotice: string;
   bookingEnabled: boolean;
   maxPerItem: number;
+  maxTotal: number;
+  otpRequired: boolean;
+  otpChannel: 'sms' | 'email';
   items: Item[];
 };
 
+type Errors = Partial<Record<FieldName, string>>;
+type OtpState = { code: string; sent: boolean; destination: string; devCode: string };
+
+const EMPTY_FORM: CustomerForm = { name: '', mobile: '', email: '', address: '', pinCode: '' };
+const NO_OTP: OtpState = { code: '', sent: false, destination: '', devCode: '' };
+const DEFAULT_MAX_PER_ITEM = 20;
+const DEFAULT_MAX_TOTAL = 50;
+const STEPS = 3;
+
 export default function BookPage() {
-  const router = useRouter();
   const [lang, setLang] = useState<Lang>('en');
   const [cfg, setCfg] = useState<Config | null>(null);
   const [step, setStep] = useState(1);
   const [qty, setQty] = useState<Record<number, number>>({});
-  const [form, setForm] = useState({ name: '', mobile: '', email: '', address: '', pinCode: '', otp: '' });
-  const [otpExpected, setOtpExpected] = useState('');
-  const [otpSent, setOtpSent] = useState(false);
+  const [form, setForm] = useState<CustomerForm>(EMPTY_FORM);
+  const [errors, setErrors] = useState<Errors>({});
+  const [otp, setOtp] = useState<OtpState>(NO_OTP);
   const [accepted, setAccepted] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [previewError, setPreviewError] = useState('');
+  const [info, setInfo] = useState('');
 
   useEffect(() => {
-    const saved = (localStorage.getItem('jb_lang') as Lang) || 'en';
-    setLang(saved);
+    setLang((localStorage.getItem('jb_lang') as Lang) || 'en');
   }, []);
 
   useEffect(() => {
-    api<Config>(`/api/public/config?lang=${lang}`).then(setCfg).catch((e) => setError(e.message));
+    api<Config>(`/api/public/config?lang=${lang}`).then(setCfg).catch((e) => setError((e as Error).message));
   }, [lang]);
 
   useEffect(() => {
     if (cfg) document.title = cfg.title;
   }, [cfg]);
 
-  // The server preview validates the customer details before it will count packets,
-  // so only ask for it once step 2 has been filled in correctly. Totals shown while
-  // choosing sweets are calculated locally from the selected quantities.
-  const detailsReady =
-    form.name.trim().length >= 3 &&
-    /^[6-9]\d{9}$/.test(form.mobile) &&
-    form.address.trim().length >= 10 &&
-    /^\d{6}$/.test(form.pinCode);
+  const otpByEmail = !!cfg?.otpRequired && cfg.otpChannel === 'email';
+  const otpField: keyof CustomerForm = otpByEmail ? 'email' : 'mobile';
+  const fieldOpts = useMemo(() => ({ emailRequired: otpByEmail }), [otpByEmail]);
+  const limits = {
+    maxPerItem: cfg && cfg.maxPerItem > 0 ? cfg.maxPerItem : DEFAULT_MAX_PER_ITEM,
+    maxTotal: cfg && cfg.maxTotal > 0 ? cfg.maxTotal : DEFAULT_MAX_TOTAL,
+  };
 
-  useEffect(() => {
-    if (!cfg || !detailsReady) {
-      setPreviewError('');
-      return;
-    }
-    api('/api/public/orders/preview', {
-      method: 'POST',
-      body: JSON.stringify({
-        items: Object.entries(qty).map(([itemId, quantity]) => ({ itemId: Number(itemId), quantity })),
-        ...form,
-      }),
-    })
-      .then(() => setPreviewError(''))
-      .catch((e) => setPreviewError((e as Error).message));
-  }, [qty, form, cfg, detailsReady]);
+  const items = cfg?.items ?? [];
+  const packets = items.reduce((sum, it) => sum + (qty[it.id] || 0), 0);
+  const amount = items.reduce((sum, it) => sum + it.pricePaise * (qty[it.id] || 0), 0);
+  const weightKg = items.reduce((sum, it) => sum + (it.weightKg || 0) * (qty[it.id] || 0), 0);
+  const qtyError = validateQuantities(qty, limits);
+  const customerValid = Object.keys(validateCustomer(form, fieldOpts)).length === 0;
+  const otpValid = !cfg?.otpRequired || (otp.sent && validateField('otp', otp.code) === null);
+  const lines = Object.entries(qty)
+    .filter(([, q]) => q > 0)
+    .map(([itemId, quantity]) => ({ itemId: Number(itemId), quantity }));
 
   function setLangAndSave(l: Lang) {
     setLang(l);
     localStorage.setItem('jb_lang', l);
   }
 
+  /** Re-check a field only once it has shown an error, so messages clear as the user types. */
+  function setField(field: keyof CustomerForm, value: string) {
+    setForm((prev) => ({ ...prev, [field]: value }));
+    if (errors[field]) {
+      setErrors((prev) => ({ ...prev, [field]: validateField(field, value, fieldOpts) ?? undefined }));
+    }
+    if (field === otpField && otp.sent) setOtp(NO_OTP);
+  }
+
+  function blurField(field: FieldName, value: string) {
+    setErrors((prev) => ({ ...prev, [field]: validateField(field, value, fieldOpts) ?? undefined }));
+  }
+
+  function showApiError(e: unknown) {
+    const err = e as ApiError;
+    const field = err instanceof ApiError ? err.field : undefined;
+    if (field && (CUSTOMER_FIELDS as readonly string[]).includes(field)) {
+      setErrors((prev) => ({ ...prev, [field]: err.message }));
+      setStep(2);
+      return;
+    }
+    if (field === 'otp') {
+      setErrors((prev) => ({ ...prev, otp: err.message }));
+      setStep(2);
+      return;
+    }
+    if (field === 'items') setStep(1);
+    setError(err.message || String(e));
+  }
+
   async function sendOtp() {
+    if (!cfg) return;
+    const destination = form[otpField];
+    const key = validateField(otpField, destination, fieldOpts);
+    if (key) {
+      setErrors((prev) => ({ ...prev, [otpField]: key }));
+      return;
+    }
+    setBusy(true);
     setError('');
     try {
-      const res = await api<{ devCode?: string; channel: string }>('/api/public/otp/request', {
+      const res = await api<{ devCode?: string; destination: string }>('/api/public/otp/request', {
         method: 'POST',
-        body: JSON.stringify({ destination: form.mobile, channel: 'email' }),
+        body: JSON.stringify({ mobile: form.mobile, email: form.email }),
       });
-      setOtpSent(true);
-      if (res.devCode) setOtpExpected(res.devCode);
+      setOtp({ code: '', sent: true, destination: res.destination, devCode: res.devCode || '' });
+      setErrors((prev) => ({ ...prev, otp: undefined }));
     } catch (e) {
-      setError((e as Error).message);
+      showApiError(e);
+    } finally {
+      setBusy(false);
     }
   }
 
   async function pay() {
-    setLoading(true);
+    setBusy(true);
     setError('');
+    setInfo('');
     try {
       const order = await api<{ orderId: string; amountPaise: number; gateway?: { keyId?: string } }>(
         '/api/public/orders',
         {
           method: 'POST',
-          body: JSON.stringify({
-            items: Object.entries(qty).map(([itemId, quantity]) => ({ itemId: Number(itemId), quantity })),
-            ...form,
-            acceptedTerms: accepted,
-            otpExpected,
-          }),
-        }
+          body: JSON.stringify({ items: lines, ...form, acceptedTerms: accepted, otpCode: otp.code }),
+        },
       );
-      // Scaffold: without Razorpay keys, show booking id path is not paid yet.
-      // With keys, open Razorpay checkout (script) using order.gateway.keyId + amount.
-      alert(
-        `Order created: ${order.orderId}\nAmount: ${formatINR(order.amountPaise)}\n` +
-          (order.gateway
-            ? 'Razorpay checkout would open here.'
-            : 'Configure Razorpay keys to accept online payment. Counter bookings work without gateway.')
+      // Scaffold: with Razorpay keys the hosted checkout opens here using order.gateway.keyId.
+      setInfo(
+        `${t(lang, 'orderCreated')}: ${order.orderId} · ${formatINR(order.amountPaise)}. ` +
+          (order.gateway ? 'Razorpay checkout would open here.' : t(lang, 'paymentNotConfigured')),
       );
-      // Demo finalize helper when testing staging without live gateway:
-      // POST /api/webhooks/razorpay/finalize-demo { orderId, amountPaise }
     } catch (e) {
-      setError((e as Error).message);
+      showApiError(e);
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
+  }
+
+  function goTo(next: number) {
+    if (next < 1 || next > STEPS) return;
+    setError('');
+    setStep(next);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   if (!cfg) {
     return (
-      <main className="container">
-        <p className="muted">Loading…</p>
-      </main>
+      <>
+        <AppHeader title={t(lang, 'title')} backHref="/" />
+        <main className="container">
+          {error ? <div className="card error">{error}</div> : <p className="muted">{t(lang, 'loading')}</p>}
+        </main>
+      </>
     );
   }
 
-  const packets = Object.values(qty).reduce((sum, n) => sum + (n > 0 ? n : 0), 0);
-  const amount = cfg.items.reduce((sum, it) => sum + it.pricePaise * (qty[it.id] || 0), 0);
-  const weightKg = cfg.items.reduce((sum, it) => sum + (it.weightKg || 0) * (qty[it.id] || 0), 0);
-  const maxPerItem = cfg.maxPerItem > 0 ? cfg.maxPerItem : 20;
+  const stepLabels = [t(lang, 'step1'), t(lang, 'step2'), t(lang, 'step3')];
+  const err = (f: FieldName) => (errors[f] ? t(lang, errors[f] as string) : null);
 
   return (
-    <main className="container">
-      <div className="lang-bar no-print">
-        {(['en', 'hi', 'gu'] as Lang[]).map((l) => (
-          <button key={l} className={lang === l ? 'active' : ''} onClick={() => setLangAndSave(l)}>
-            {l.toUpperCase()}
-          </button>
-        ))}
-      </div>
+    <>
+      <AppHeader title={cfg.title} subtitle={cfg.subtitle} lang={lang} onLang={setLangAndSave} backHref="/" />
+      <main className="container">
+        {cfg.notice && <div className="card info">{cfg.notice}</div>}
+        {!cfg.bookingEnabled && <div className="card error">{t(lang, 'bookingClosed')}</div>}
 
-      <h1>{cfg.title}</h1>
-      <p className="muted">{cfg.subtitle}</p>
-      {cfg.notice && <div className="card">{cfg.notice}</div>}
+        <Stepper step={step} labels={stepLabels} onGo={goTo} />
 
-      {!cfg.bookingEnabled && (
-        <div className="card error">{t(lang, 'bookingClosed')}</div>
-      )}
+        {error && (
+          <div className="card error" role="alert">
+            {error}
+          </div>
+        )}
+        {info && <div className="card info">{info}</div>}
 
-      <div className="steps">
-        <span className={step === 1 ? 'active' : ''}>1 · {t(lang, 'step1')}</span>
-        <span className={step === 2 ? 'active' : ''}>2 · {t(lang, 'step2')}</span>
-        <span className={step === 3 ? 'active' : ''}>3 · {t(lang, 'step3')}</span>
-      </div>
+        {step === 1 && (
+          <section className="card">
+            <h2>{t(lang, 'chooseSweets')}</h2>
+            <p className="muted">{t(lang, 'chooseSweetsHelp')}</p>
+            <div className="item-list">
+              {items.map((item) => {
+                const q = qty[item.id] || 0;
+                return (
+                  <div className={`item-card${q > 0 ? ' selected' : ''}`} key={item.id}>
+                    <div>
+                      <div className="name">{item.name}</div>
+                      <div className="meta">
+                        {item.packSize} · <span className="price">{formatINR(item.pricePaise)}</span> {t(lang, 'each')}
+                      </div>
+                    </div>
+                    <QtyStepper
+                      value={q}
+                      max={limits.maxPerItem}
+                      label={item.name}
+                      onChange={(n) => setQty((prev) => ({ ...prev, [item.id]: n }))}
+                    />
+                    {q > 0 && (
+                      <div className="line-total">
+                        {t(lang, 'lineTotal')}
+                        <strong>{formatINR(item.pricePaise * q)}</strong>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {qtyError && packets > 0 && (
+              <p className="field-error" role="alert">
+                {t(lang, qtyError)}
+              </p>
+            )}
+          </section>
+        )}
 
-      {error && <div className="error">{error}</div>}
+        {step === 2 && (
+          <section className="card">
+            <h2>{t(lang, 'step2')}</h2>
+            <p className="muted">{t(lang, 'detailsHelp')}</p>
 
-      {step === 1 && (
-        <div className="card">
-          {cfg.items.map((item) => (
-            <div className="item-row" key={item.id}>
-              <div>
-                <strong>{item.name}</strong>
-                <div className="muted">
-                  {item.packSize} · {formatINR(item.pricePaise)}
-                </div>
-              </div>
+            <Field id="name" label={t(lang, 'name')} error={err('name')}>
               <input
-                className="qty"
-                type="number"
-                min={0}
-                max={maxPerItem}
-                placeholder={t(lang, 'quantity')}
-                value={qty[item.id] ?? 0}
-                onChange={(e) =>
-                  setQty((q) => ({
-                    ...q,
-                    [item.id]: Math.min(maxPerItem, Math.max(0, Number(e.target.value) || 0)),
-                  }))
-                }
+                id="name"
+                autoComplete="name"
+                value={form.name}
+                onChange={(e) => setField('name', e.target.value)}
+                onBlur={(e) => blurField('name', e.target.value)}
+                aria-invalid={!!errors.name}
               />
-            </div>
-          ))}
-          <div className="total-bar">
-            <div>
-              <strong>{packets}</strong> {t(lang, 'packets')} · <strong>{weightKg.toFixed(2)}</strong>{' '}
-              {t(lang, 'kg')} · <strong>{formatINR(amount)}</strong>
-            </div>
-            <button className="btn block" disabled={packets < 1} onClick={() => setStep(2)}>
-              {t(lang, 'next')}
-            </button>
-          </div>
-        </div>
-      )}
+            </Field>
 
-      {step === 2 && (
-        <div className="card">
-          <label>{t(lang, 'name')}</label>
-          <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-          <label>{t(lang, 'mobile')}</label>
-          <input
-            value={form.mobile}
-            onChange={(e) => setForm({ ...form, mobile: e.target.value })}
-            inputMode="numeric"
-          />
-          <div className="row">
-            <button className="btn secondary" onClick={sendOtp} type="button">
-              {t(lang, 'requestOtp')}
-            </button>
-          </div>
-          {otpSent && (
-            <>
-              <label>{t(lang, 'otp')}</label>
+            <Field id="mobile" label={t(lang, 'mobile')} error={err('mobile')}>
               <input
-                value={form.otp}
-                onChange={(e) => setForm({ ...form, otp: e.target.value })}
+                id="mobile"
                 inputMode="numeric"
+                autoComplete="tel-national"
+                maxLength={10}
+                value={form.mobile}
+                onChange={(e) => setField('mobile', e.target.value.replace(/\D/g, ''))}
+                onBlur={(e) => blurField('mobile', e.target.value)}
+                aria-invalid={!!errors.mobile}
               />
-              {otpExpected && <p className="muted">Dev OTP: {otpExpected}</p>}
-            </>
-          )}
-          <label>{t(lang, 'email')}</label>
-          <input
-            type="email"
-            value={form.email}
-            onChange={(e) => setForm({ ...form, email: e.target.value })}
-          />
-          <label>{t(lang, 'address')}</label>
-          <textarea
-            rows={3}
-            value={form.address}
-            onChange={(e) => setForm({ ...form, address: e.target.value })}
-          />
-          <label>{t(lang, 'pin')}</label>
-          <input
-            value={form.pinCode}
-            onChange={(e) => setForm({ ...form, pinCode: e.target.value })}
-            inputMode="numeric"
-          />
-          <div className="row" style={{ marginTop: 12 }}>
-            <button className="btn secondary" onClick={() => setStep(1)}>
-              {t(lang, 'back')}
-            </button>
-            <button className="btn" onClick={() => setStep(3)}>
-              {t(lang, 'next')}
-            </button>
+            </Field>
+
+            <Field
+              id="email"
+              label={otpByEmail ? t(lang, 'emailForOtp') : t(lang, 'email')}
+              error={err('email')}
+            >
+              <input
+                id="email"
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                value={form.email}
+                onChange={(e) => setField('email', e.target.value)}
+                onBlur={(e) => blurField('email', e.target.value)}
+                aria-invalid={!!errors.email}
+              />
+            </Field>
+
+            {cfg.otpRequired && (
+              <div className="otp-box">
+                {!otp.sent ? (
+                  <>
+                    <p className="muted">{t(lang, otpByEmail ? 'otpHelpEmail' : 'otpHelpSms')}</p>
+                    <button
+                      type="button"
+                      className="btn secondary block"
+                      disabled={busy || !!validateField(otpField, form[otpField], fieldOpts)}
+                      onClick={sendOtp}
+                    >
+                      {t(lang, 'sendOtp')}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="muted">
+                      {t(lang, 'otpSentTo')} <strong>{otp.destination}</strong>
+                    </p>
+                    <Field id="otp" label={t(lang, 'otp')} error={err('otp')}>
+                      <input
+                        id="otp"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        maxLength={6}
+                        value={otp.code}
+                        onChange={(e) => {
+                          const code = e.target.value.replace(/\D/g, '');
+                          setOtp((prev) => ({ ...prev, code }));
+                          if (errors.otp) setErrors((prev) => ({ ...prev, otp: validateField('otp', code) ?? undefined }));
+                        }}
+                        onBlur={(e) => blurField('otp', e.target.value)}
+                        aria-invalid={!!errors.otp}
+                      />
+                    </Field>
+                    {otp.devCode && <p className="muted small">Dev OTP: {otp.devCode}</p>}
+                    <button type="button" className="btn ghost sm" disabled={busy} onClick={sendOtp}>
+                      {t(lang, 'resendOtp')}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+
+            <Field id="address" label={t(lang, 'address')} error={err('address')}>
+              <textarea
+                id="address"
+                rows={3}
+                autoComplete="street-address"
+                value={form.address}
+                onChange={(e) => setField('address', e.target.value)}
+                onBlur={(e) => blurField('address', e.target.value)}
+                aria-invalid={!!errors.address}
+              />
+            </Field>
+
+            <Field id="pinCode" label={t(lang, 'pin')} error={err('pinCode')}>
+              <input
+                id="pinCode"
+                inputMode="numeric"
+                autoComplete="postal-code"
+                maxLength={6}
+                value={form.pinCode}
+                onChange={(e) => setField('pinCode', e.target.value.replace(/\D/g, ''))}
+                onBlur={(e) => blurField('pinCode', e.target.value)}
+                aria-invalid={!!errors.pinCode}
+              />
+            </Field>
+          </section>
+        )}
+
+        {step === 3 && (
+          <>
+            <section className="card">
+              <div className="spread">
+                <h2>{t(lang, 'yourOrder')}</h2>
+                <button type="button" className="btn ghost sm" onClick={() => goTo(1)}>
+                  {t(lang, 'edit')}
+                </button>
+              </div>
+              <ul className="summary-list">
+                {items
+                  .filter((it) => (qty[it.id] || 0) > 0)
+                  .map((it) => (
+                    <li key={it.id}>
+                      <span>
+                        {it.name}
+                        <div className="qty">
+                          {qty[it.id]} × {it.packSize} · {formatINR(it.pricePaise)}
+                        </div>
+                      </span>
+                      <strong>{formatINR(it.pricePaise * qty[it.id])}</strong>
+                    </li>
+                  ))}
+              </ul>
+              <div className="summary-total">
+                <span>
+                  {t(lang, 'total')} · {packets} {t(lang, 'packets')} · {weightKg.toFixed(2)} {t(lang, 'kg')}
+                </span>
+                <span className="amt">{formatINR(amount)}</span>
+              </div>
+            </section>
+
+            <section className="card">
+              <div className="spread">
+                <h2>{t(lang, 'step2')}</h2>
+                <button type="button" className="btn ghost sm" onClick={() => goTo(2)}>
+                  {t(lang, 'edit')}
+                </button>
+              </div>
+              <p>
+                <strong>{form.name}</strong> · {form.mobile}
+                {form.email && (
+                  <>
+                    <br />
+                    {form.email}
+                  </>
+                )}
+                <br />
+                <span className="muted">
+                  {form.address} — {form.pinCode}
+                </span>
+              </p>
+            </section>
+
+            <section className="card">
+              <h2>{t(lang, 'beforeYouPay')}</h2>
+              <p className="muted">{t(lang, 'reviewHelp')}</p>
+              <div className="terms-box">{cfg.terms}</div>
+              <hr className="festive-rule" />
+              <p className="muted small">{cfg.privacyNotice}</p>
+              <label className="check">
+                <input type="checkbox" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} />
+                <span>{t(lang, 'acceptTerms')}</span>
+              </label>
+            </section>
+          </>
+        )}
+      </main>
+
+      <div className="bottom-bar no-print">
+        <div className="inner">
+          <div className="totals">
+            <div className="amt">{formatINR(amount)}</div>
+            <div className="sub">
+              {packets} {t(lang, 'packets')} · {weightKg.toFixed(2)} {t(lang, 'kg')}
+            </div>
+          </div>
+          <div className="actions">
+            {step > 1 && (
+              <button type="button" className="btn secondary" onClick={() => goTo(step - 1)}>
+                {t(lang, 'back')}
+              </button>
+            )}
+            {step === 1 && (
+              <button type="button" className="btn" disabled={!!qtyError || !cfg.bookingEnabled} onClick={() => goTo(2)}>
+                {t(lang, 'next')}
+              </button>
+            )}
+            {step === 2 && (
+              <button type="button" className="btn" disabled={!customerValid || !otpValid} onClick={() => goTo(3)}>
+                {t(lang, 'next')}
+              </button>
+            )}
+            {step === 3 && (
+              <button type="button" className="btn gold" disabled={!accepted || busy || !cfg.bookingEnabled} onClick={pay}>
+                {t(lang, 'pay')} · {formatINR(amount)}
+              </button>
+            )}
           </div>
         </div>
-      )}
-
-      {step === 3 && (
-        <div className="card">
-          <h2>{t(lang, 'beforeYouPay')}</h2>
-          <div className="terms-box">{cfg.terms}</div>
-          <p className="muted">{cfg.privacyNotice}</p>
-          <label className="row" style={{ marginTop: 8 }}>
-            <input
-              type="checkbox"
-              checked={accepted}
-              onChange={(e) => setAccepted(e.target.checked)}
-              style={{ width: 24, minHeight: 24 }}
-            />
-            <span>{t(lang, 'acceptTerms')}</span>
-          </label>
-          {previewError && <div className="error">{previewError}</div>}
-          <p>
-            <strong>
-              {packets} {t(lang, 'packets')} · {formatINR(amount)}
-            </strong>
-          </p>
-          <button className="btn gold block" disabled={!accepted || loading} onClick={pay}>
-            {t(lang, 'pay')}
-          </button>
-        </div>
-      )}
-    </main>
+      </div>
+    </>
   );
 }
