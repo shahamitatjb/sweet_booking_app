@@ -3,8 +3,9 @@
 # in the Render dashboard before the booking window opens.
 #
 # One-time setup after the first deploy:
-#   1. Neon: create a project, copy host/db/user/password into jb-api env vars.
-#      Flyway creates the schema and seed settings on first boot.
+#   1. Database: the Blueprint creates the free Postgres `jb-db` (same region as the
+#      services) and injects host/port/name/user/password into jb-api. Flyway creates
+#      the schema on first boot. Remove any manually set DATABASE_URL on jb-api.
 #   2. Google Cloud Console → OAuth client → Authorised redirect URI:
 #        https://<jb-frontend host>/login/oauth2/code/google
 #      (the public site, not the API host).
@@ -17,6 +18,7 @@ services:
   - type: web
     name: jb-frontend
     runtime: node
+    region: oregon
     plan: free          # production: starter or standard
     rootDir: frontend
     buildCommand: npm ci && npm run build
@@ -34,6 +36,7 @@ services:
   - type: web
     name: jb-api
     runtime: docker
+    region: oregon
     plan: free          # production: starter (min) or standard for the booking window
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
@@ -41,16 +44,31 @@ services:
     envVars:
       - key: SPRING_PROFILES_ACTIVE
         value: prod
-      - key: DATABASE_URL
-        # JDBC form WITHOUT credentials in the URL (the driver rejects user:pass@host):
-        #   Render Postgres (same region, internal host): jdbc:postgresql://<dpg-xxxx-a>:5432/<db>
-        #   Neon:                                         jdbc:postgresql://<neon-host>/<db>?sslmode=require
-        # Put the user and password in DATABASE_USERNAME / DATABASE_PASSWORD below.
-        sync: false
+      # Database: wired from the Blueprint-managed `jb-db` below. application.yml builds
+      # jdbc:postgresql://HOST:PORT/NAME from these (the JDBC driver rejects user:pass@host
+      # URLs, so credentials stay in their own variables). To use an external DB such as
+      # Neon instead, set DATABASE_URL=jdbc:postgresql://<host>/<db>?sslmode=require plus
+      # DATABASE_USERNAME / DATABASE_PASSWORD in the dashboard; DATABASE_URL wins when set.
+      - key: DATABASE_HOST
+        fromDatabase:
+          name: jb-db
+          property: host
+      - key: DATABASE_PORT
+        fromDatabase:
+          name: jb-db
+          property: port
+      - key: DATABASE_NAME
+        fromDatabase:
+          name: jb-db
+          property: database
       - key: DATABASE_USERNAME
-        sync: false
+        fromDatabase:
+          name: jb-db
+          property: user
       - key: DATABASE_PASSWORD
-        sync: false
+        fromDatabase:
+          name: jb-db
+          property: password
       - key: BOOTSTRAP_ADMIN_EMAILS
         sync: false        # comma-separated Google emails; applied only to an empty staff table
       - key: FRONTEND_ORIGIN
@@ -81,3 +99,13 @@ services:
         sync: false
       - key: RECEIPT_CC_EMAILS
         sync: false        # comma-separated committee addresses copied on every receipt
+
+databases:
+  # Free tier: expires 30 days after creation. Upgrade (Basic 256MB+) before the booking window.
+  - name: jb-db
+    region: oregon
+    plan: free
+    postgresMajorVersion: "16"
+    databaseName: jb_mithai
+    user: jb
+    ipAllowList: []     # private-network access only (jb-api); add your IP here for psql access
