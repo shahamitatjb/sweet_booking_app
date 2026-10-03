@@ -7,6 +7,7 @@ import com.jb.repository.BookingRepository;
 import com.jb.repository.OrderItemRepository;
 import com.jb.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +22,7 @@ import java.util.Optional;
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
 import com.openhtmltopdf.svgsupport.BatikSVGDrawer;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ReceiptService {
@@ -40,7 +42,10 @@ public class ReceiptService {
     @Transactional(readOnly = true)
     public ReceiptView view(String bookingId, boolean includePii) {
         Booking booking = bookingRepository.findByBookingId(bookingId)
-                .orElseThrow(() -> new IllegalArgumentException("Booking not found"));
+                .orElseThrow(() -> {
+                    log.warn("[BOOKING] receipt view failed: booking {} not found", bookingId);
+                    return new IllegalArgumentException("Booking not found");
+                });
         Order order = booking.getOrder();
         List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
         String verifyUrl = qrService.verificationUrl(
@@ -64,7 +69,9 @@ public class ReceiptService {
                 settingsService.getOrDefault("thank_you", "en", "Thank you for your continued support"),
                 settingsService.getOrDefault("title", "en", "Diwali Sweets Booking"),
                 verifyUrl,
-                booking.getQrSignature()
+                booking.getQrSignature(),
+                order.getStatus().name(),
+                order.getVoidReason()
         );
     }
 
@@ -77,9 +84,12 @@ public class ReceiptService {
             builder.withHtmlContent(html, null);
             builder.toStream(bos);
             builder.run();
-            return bos.toByteArray();
+            byte[] pdf = bos.toByteArray();
+            log.info("[BOOKING] receipt PDF rendered for {} ({} bytes)", bookingId, pdf.length);
+            return pdf;
         } catch (Exception e) {
             // Fallback: print-optimized HTML bytes if PDF engine fails in constrained env
+            log.error("[BOOKING] PDF render FAILED for {} — falling back to HTML bytes", bookingId, e);
             return html.getBytes(StandardCharsets.UTF_8);
         }
     }
@@ -94,6 +104,10 @@ public class ReceiptService {
         String pii = v.name() == null ? "" :
                 "<p><strong>Name:</strong> " + esc(v.name()) + "<br/><strong>Mobile:</strong> " + esc(v.mobile()) +
                 "<br/><strong>Address:</strong> " + esc(v.address()) + " — " + esc(v.pin()) + "</p>";
+        String cancelled = !"voided".equals(v.status()) ? "" :
+                "<p style=\"border:2px solid #b00000;font-weight:bold;padding:6px;\">CANCELLED"
+                        + (v.voidReason() == null || v.voidReason().isBlank() ? "" : " — " + esc(v.voidReason()))
+                        + "</p>";
         return """
             <html><head><meta charset="utf-8"/><style>
               @page { size: 14.9cm 21cm; margin: 0; }
@@ -105,6 +119,7 @@ public class ReceiptService {
               .muted { color: #333; font-size: 10px; }
             </style></head><body>
               <h1>%s</h1>
+              %s
               <p><strong>Booking ID:</strong> %s<br/>
               <strong>Booked at (IST):</strong> %s<br/>
               <strong>Channel:</strong> %s · <strong>Payment:</strong> %s</p>
@@ -116,7 +131,7 @@ public class ReceiptService {
               <p>%s</p>
             </body></html>
             """.formatted(
-                esc(v.title()), esc(v.bookingId()), esc(v.bookedAtIst()),
+                esc(v.title()), cancelled, esc(v.bookingId()), esc(v.bookedAtIst()),
                 esc(v.channel()), esc(v.paymentMode() == null ? "-" : v.paymentMode()),
                 pii, lines, v.totalPackets(), formatPaise(v.totalAmount()),
                 esc(v.verifyUrl()), esc(v.signature()), esc(v.terms()), esc(v.thankYou()));
@@ -153,6 +168,8 @@ public class ReceiptService {
             String thankYou,
             String title,
             String verifyUrl,
-            String signature
+            String signature,
+            String status,
+            String voidReason
     ) {}
 }

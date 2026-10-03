@@ -20,8 +20,9 @@ public class NotificationOutbox {
     @Column(name = "booking_id")
     private String bookingId;
 
+    // UUID (not String): the DB column is uuid and Hibernate binds by Java type.
     @Column(name = "order_id", columnDefinition = "uuid")
-    private String orderId;
+    private java.util.UUID orderId;
 
     @Column(nullable = false)
     private String kind;

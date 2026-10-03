@@ -37,4 +37,15 @@ public class AuditLog {
 
     @Column(name = "request_id")
     private String requestId;
+
+    /**
+     * Lombok's @Builder ignores field initializers, so `at`/`detailsJson` would be
+     * null when built via AuditLog.builder(). Guard both against the NOT NULL
+     * columns in audit_log.
+     */
+    @PrePersist
+    void prePersist() {
+        if (at == null) at = Instant.now();
+        if (detailsJson == null) detailsJson = "{}";
+    }
 }

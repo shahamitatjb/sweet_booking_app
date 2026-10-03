@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 type Line = { name: string; packSize: string; quantity: number; unitPrice: number };
 type Receipt = {
@@ -20,10 +20,12 @@ type Receipt = {
   title: string;
   verifyUrl: string;
   signature: string;
+  status: string;
+  voidReason: string | null;
 };
 
-export default function ReceiptPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
+export default function ReceiptPage({ params }: { params: { id: string } }) {
+  const { id } = params;
   const [data, setData] = useState<Receipt | null>(null);
   const [error, setError] = useState('');
 
@@ -51,6 +53,18 @@ export default function ReceiptPage({ params }: { params: Promise<{ id: string }
     <main className="container">
       <div className="print-page card" style={{ border: '1px solid #000' }}>
         <h1>{data.title}</h1>
+        {data.status === 'voided' && (
+          <p
+            style={{
+              border: '2px solid var(--err)',
+              color: 'var(--err)',
+              fontWeight: 700,
+              padding: '8px 10px',
+            }}
+          >
+            CANCELLED{data.voidReason ? ` — ${data.voidReason}` : ''}
+          </p>
+        )}
         <p>
           <strong>Booking ID:</strong> {data.bookingId}
           <br />

@@ -13,5 +13,11 @@ INSERT INTO staff (email, name, role, active) VALUES
   ('counter1@example.com', 'Counter One', 'COUNTER', TRUE),
   ('counter2@example.com', 'Counter Two', 'COUNTER', TRUE);
 
+-- Real staff (Google sign-in allowlist). Only emails with an active row here
+-- can log in, after the Google OIDC exchange succeeds.
+INSERT INTO staff (email, name, role, active) VALUES
+  ('shahamitatjb@gmail.com', 'Amit Shah', 'ADMIN', TRUE)
+ON CONFLICT (email) DO UPDATE SET active = TRUE, role = EXCLUDED.role, name = EXCLUDED.name;
+
 -- Hindi / Gujarati texts can be inserted later with fallback to English in app
 -- INSERT INTO settings (key, language, value) VALUES ('title','hi','...'), ('title','gu','...');

@@ -1,5 +1,6 @@
 package com.jb.config;
 
+import com.jb.security.CsrfCookieGuardFilter;
 import com.jb.security.GoogleStaffLoginHandler;
 import com.jb.security.StaffJwtFilter;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +18,9 @@ import org.springframework.security.oauth2.client.web.DefaultOAuth2Authorization
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestResolver;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.csrf.CsrfFilter;
+import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -38,7 +42,17 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http,
                                            ClientRegistrationRepository clients) throws Exception {
-        http.csrf(csrf -> csrf.ignoringRequestMatchers("/api/webhooks/**", "/api/public/**"));
+        // Cookie-based double-submit CSRF: the API is stateless, so there is no HTTP
+        // session to stash the token in. The SPA reads the XSRF-TOKEN cookie and echoes
+        // it back in X-XSRF-TOKEN. The plain request handler is used (not the XOR one)
+        // because the client can only send the raw cookie value, never a masked token.
+        http.csrf(csrf -> csrf
+                .csrfTokenRepository(csrfRepository())
+                .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
+                .ignoringRequestMatchers("/api/webhooks/**", "/api/public/**"));
+        // Swallow the token-clearing Set-Cookie that CookieCsrfTokenRepository emits on
+        // every request; StaffJwtFilter re-asserts a usable token instead.
+        http.addFilterBefore(new CsrfCookieGuardFilter(), CsrfFilter.class);
         http.cors(cors -> cors.configurationSource(corsConfigurationSource()));
         http.sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
         http.authorizeHttpRequests(auth -> auth
@@ -48,6 +62,9 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/verify/**").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/webhooks/**").permitAll()
                 .requestMatchers("/api/staff/**").hasAnyRole("ADMIN", "COUNTER")
+                // The counter screen needs the catalogue, but it is a COUNTER-level job,
+                // not an admin one. Read-only; writes below stay ADMIN-only.
+                .requestMatchers(HttpMethod.GET, "/api/admin/items").hasAnyRole("ADMIN", "COUNTER")
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .anyRequest().authenticated()
         );
@@ -66,6 +83,13 @@ public class SecurityConfig {
         );
         http.addFilterBefore(staffJwtFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
+    }
+
+    private CookieCsrfTokenRepository csrfRepository() {
+        CookieCsrfTokenRepository repo = CookieCsrfTokenRepository.withHttpOnlyFalse();
+        repo.setSecure(frontendOrigin.startsWith("https"));
+        repo.setCookiePath("/");
+        return repo;
     }
 
     @Bean

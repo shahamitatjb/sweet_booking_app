@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { formatINR } from '../../../lib/format';
+import { csrfHeaders, formatINR } from '../../../lib/format';
 
 type Me = { email: string; name: string; role: string };
 type Item = { id: number; nameEn: string; packSize: string; pricePaise: number };
@@ -20,7 +20,7 @@ export default function CounterPage() {
       .then((r) => r.json())
       .then((j) => setMe(j.role ? j : null))
       .catch(() => setMe(null));
-    fetch('/api/admin/items')
+    fetch('/api/admin/items', { credentials: 'include' })
       .then((r) => r.json())
       .then(setItems)
       .catch(() => {});
@@ -42,7 +42,7 @@ export default function CounterPage() {
       const res = await fetch('/api/staff/counter/bookings', {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify(payload),
       });
       const data = await res.json();

@@ -67,13 +67,16 @@ public class EmailService {
                     .build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() >= 300) {
+                log.error("[EMAIL] Resend returned {} for to={}: {}", response.statusCode(), to, response.body());
                 throw new IllegalStateException("Resend HTTP " + response.statusCode() + ": " + response.body());
             }
             log.info("Email sent via Resend to {}", to);
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
+            log.error("[EMAIL] Resend send interrupted for to={}", to, ie);
             throw new IllegalStateException("Resend send interrupted", ie);
         } catch (Exception e) {
+            log.error("[EMAIL] Resend send FAILED for to={} subject={}", to, subject, e);
             throw new IllegalStateException("Resend send failed: " + e.getMessage(), e);
         }
     }

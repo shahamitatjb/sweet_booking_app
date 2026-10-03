@@ -60,7 +60,8 @@ public class PublicApiController {
         String channelRaw = body.getOrDefault("channel", "email");
         OtpService.Channel channel;
         try {
-            channel = OtpService.Channel.valueOf(channelRaw.toUpperCase());
+            // enum constants are lowercase (sms|email|dev)
+            channel = OtpService.Channel.valueOf(channelRaw.trim().toLowerCase());
         } catch (Exception e) {
             log.warn("[OTP] unknown channel '{}' requested — falling back to email", channelRaw);
             channel = OtpService.Channel.email;
@@ -185,9 +186,13 @@ public class PublicApiController {
             log.info("[BOOKING] step 3/3 gateway order created: orderId={} gatewayOrderId={} amountPaise={}",
                     order.getId(), gw.get("gatewayOrderId"), order.getTotalAmount());
             return ResponseEntity.ok(out);
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            log.warn("[BOOKING] createOrder rejected: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", String.valueOf(e.getMessage())));
         } catch (Exception e) {
-            log.error("[BOOKING] createOrder failed unexpectedly", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            log.error("[BOOKING] createOrder failed unexpectedly (order may already exist)", e);
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", "Could not create the booking — see API logs"));
         }
     }
 

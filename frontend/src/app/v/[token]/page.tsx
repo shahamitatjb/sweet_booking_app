@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 type VerifyResult = {
   status: 'genuine' | 'invalid';
@@ -11,8 +11,8 @@ type VerifyResult = {
   scanCount?: number;
 };
 
-export default function VerifyPage({ params }: { params: Promise<{ token: string }> }) {
-  const { token } = use(params);
+export default function VerifyPage({ params }: { params: { token: string } }) {
+  const { token } = params;
   const [result, setResult] = useState<VerifyResult | null>(null);
 
   useEffect(() => {

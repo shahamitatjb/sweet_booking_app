@@ -111,6 +111,18 @@ table.receipt-table th, table.receipt-table td {
 }
 .admin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .admin-table th, .admin-table td { border-bottom: 1px solid var(--line); padding: 6px 4px; text-align: left; }
+.admin-table input, .admin-table select { min-height: 36px; padding: 6px 8px; font-size: 13px; }
+.admin-table .btn { min-height: 36px; padding: 6px 10px; font-size: 13px; }
+input[type="checkbox"] { width: auto; min-height: auto; padding: 0; }
+.form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 4px 16px;
+  align-items: start;
+}
+.form label { margin: 6px 0; }
+.form label > span { display: block; }
+.form label > em { display: block; font-style: normal; font-size: 0.85rem; color: var(--muted); font-weight: 400; }
 .terms-box {
   border: 2px dashed var(--gold);
   border-radius: 8px;

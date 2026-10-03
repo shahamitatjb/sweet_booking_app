@@ -24,6 +24,11 @@ public class OutboxWorker {
     @Transactional
     public void processPending() {
         List<NotificationOutbox> due = outboxRepository.findDue(Instant.now());
+        if (due.isEmpty()) {
+            log.debug("[NOTIFY] outbox: nothing due");
+            return;
+        }
+        log.info("[NOTIFY] outbox: {} message(s) due", due.size());
         for (NotificationOutbox row : due) {
             try {
                 if ("receipt_pdf".equals(row.getKind())) {
@@ -37,6 +42,8 @@ public class OutboxWorker {
                 }
                 row.setStatus(NotificationOutbox.Status.sent);
                 row.setAttempts(row.getAttempts() + 1);
+                log.info("[NOTIFY] sent {} for booking {} to {} (attempt {})",
+                        row.getKind(), row.getBookingId(), row.getToAddress(), row.getAttempts());
             } catch (Exception e) {
                 row.setAttempts(row.getAttempts() + 1);
                 row.setLastError(e.getMessage());
@@ -44,9 +51,13 @@ public class OutboxWorker {
                 row.setNextAttemptAt(Instant.now().plus(Duration.ofMinutes(backoffMin)));
                 if (row.getAttempts() >= 8) {
                     row.setStatus(NotificationOutbox.Status.failed);
-                    log.error("Outbox {} failed permanently: {}", row.getId(), e.getMessage());
+                    log.error("[NOTIFY] {} for booking {} to {} FAILED permanently after {} attempts; giving up. Last error: {}",
+                            row.getKind(), row.getBookingId(), row.getToAddress(), row.getAttempts(), e.getMessage(), e);
                 } else {
                     row.setStatus(NotificationOutbox.Status.pending);
+                    log.warn("[NOTIFY] {} for booking {} to {} failed (attempt {}), retrying in {} min: {}",
+                            row.getKind(), row.getBookingId(), row.getToAddress(), row.getAttempts(),
+                            backoffMin, e.toString());
                 }
             }
             outboxRepository.save(row);

@@ -5,6 +5,7 @@ import com.jb.domain.Order;
 import com.jb.repository.BookingRepository;
 import com.jb.repository.OrderItemRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -13,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class VerificationService {
@@ -25,12 +27,20 @@ public class VerificationService {
         Map<String, Object> out = new LinkedHashMap<>();
         Optional<Booking> found = bookingRepository.findByBookingId(bookingId);
         if (found.isEmpty()) {
+            log.warn("[BOOKING] QR verify INVALID: booking {} not found", bookingId);
             out.put("status", "invalid");
             out.put("message", "Invalid receipt");
             return out;
         }
         Booking booking = found.get();
         Order order = booking.getOrder();
+        if (order.getStatus() == Order.Status.voided) {
+            log.warn("[BOOKING] QR verify VOIDED for {}", bookingId);
+            out.put("status", "invalid");
+            out.put("message", "Booking cancelled");
+            out.put("bookingId", booking.getBookingId());
+            return out;
+        }
         boolean sigOk = qrService.verify(
                 booking.getBookingId(),
                 order.getTotalAmount(),
@@ -38,6 +48,8 @@ public class VerificationService {
                 signature);
         boolean paid = order.getStatus() == Order.Status.paid;
         if (!sigOk || !paid) {
+            log.warn("[BOOKING] QR verify INVALID for {}: signatureOk={} orderStatus={}",
+                    bookingId, sigOk, order.getStatus());
             out.put("status", "invalid");
             out.put("message", "Invalid receipt");
             out.put("bookingId", booking.getBookingId());
@@ -57,7 +69,11 @@ public class VerificationService {
         out.put("totalPackets", packets);
         out.put("firstScannedAt", booking.getFirstScannedAt());
         out.put("scanCount", booking.getScanCount());
+        log.info("[BOOKING] QR verify GENUINE for {}: scanCount={} packets={} (first scan {})",
+                bookingId, booking.getScanCount(), packets, booking.getFirstScannedAt());
         if (booking.getScanCount() > 1) {
+            log.warn("[BOOKING] QR {} scanned more than once (scanCount={}) — verify name/mobile at counter",
+                    bookingId, booking.getScanCount());
             out.put("warning", "This receipt has been scanned before. Verify name and last 4 digits of mobile with the person.");
         }
         return out;
@@ -66,7 +82,10 @@ public class VerificationService {
     @Transactional(readOnly = true)
     public Map<String, Object> staffDetail(String bookingId) {
         Booking booking = bookingRepository.findByBookingId(bookingId)
-                .orElseThrow(() -> new IllegalArgumentException("Not found"));
+                .orElseThrow(() -> {
+                    log.warn("[BOOKING] staff detail not found for {}", bookingId);
+                    return new IllegalArgumentException("Not found");
+                });
         Order order = booking.getOrder();
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("bookingId", booking.getBookingId());

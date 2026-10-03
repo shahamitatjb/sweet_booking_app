@@ -29,10 +29,16 @@ public class StuckPaymentJob {
     public void sweep() {
         Instant cutoff = Instant.now().minus(Duration.ofMinutes(30));
         List<Order> stuck = orderRepository.findStuckAwaitingPayment(cutoff);
+        if (stuck.isEmpty()) {
+            log.debug("[PAY] stuck-payment sweep: clean");
+            return;
+        }
+        log.warn("[PAY] stuck-payment sweep found {} order(s) older than 30 min", stuck.size());
         for (Order o : stuck) {
             log.warn("Stuck awaiting_payment order {} amount={} gatewayOrder={}",
                     o.getId(), o.getTotalAmount(), o.getGatewayOrderId());
             if (!razorpayService.enabled()) {
+                log.warn("[PAY] Razorpay keys not set — cannot reconcile order {}", o.getId());
                 continue;
             }
             // Production: fetch payment by gateway order id; if captured and no booking → refund

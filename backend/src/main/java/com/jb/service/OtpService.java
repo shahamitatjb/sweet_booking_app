@@ -41,6 +41,7 @@ public class OtpService {
     public OtpIssue issue(String destination, Channel channel) {
         String dest = normalize(destination);
         if (!isValidDestination(channel, dest)) {
+            log.warn("[OTP] rejected: invalid {} destination '{}'", channel, dest);
             throw new IllegalArgumentException("Invalid OTP destination");
         }
         rateLimit(dest, channel);
@@ -54,15 +55,26 @@ public class OtpService {
         }
         if (channel == Channel.email || "email".equals(providerName)) {
             emailService.sendSimple(dest, "Your booking OTP", "Your OTP is " + code + ". Valid for " + ttlMinutes + " minutes.");
+            log.info("[OTP] emailed OTP to {} (expires {})", dest, expires);
             return new OtpIssue("email", dest, null);
         }
         // SMS provider not wired until DLT — production path should set OTP_PROVIDER=sms only when ready
+        log.error("[OTP] SMS provider not configured — request for {} failed", dest);
         throw new IllegalStateException("SMS OTP provider not configured. Use email OTP or enable SMS after DLT.");
     }
 
     public boolean verify(String destination, Channel channel, String code, String provided) {
-        if (provided == null || code == null) return false;
-        return MessageDigest.isEqual(code.getBytes(), provided.trim().getBytes());
+        if (provided == null || code == null) {
+            log.warn("[OTP] verify failed: missing code (destination={} channel={})", destination, channel);
+            return false;
+        }
+        boolean ok = MessageDigest.isEqual(code.getBytes(), provided.trim().getBytes());
+        if (ok) {
+            log.info("[OTP] verify OK for {} via {}", destination, channel);
+        } else {
+            log.warn("[OTP] verify FAILED (mismatch) for {} via {}", destination, channel);
+        }
+        return ok;
     }
 
     public void clearAttempts(String destination) {
@@ -76,9 +88,12 @@ public class OtpService {
             a.count.set(0);
             a.resetAt = null;
         }
-        if (a.count.incrementAndGet() > 5) {
+        int n = a.count.incrementAndGet();
+        if (n > 5) {
+            log.warn("[OTP] rate limit hit for {} ({} requests in window)", dest, n);
             throw new IllegalArgumentException("Too many OTP requests. Try later.");
         }
+        log.info("[OTP] rate counter for {}: {}/5", dest, n);
     }
 
     private String resolveProvider(Channel channel) {

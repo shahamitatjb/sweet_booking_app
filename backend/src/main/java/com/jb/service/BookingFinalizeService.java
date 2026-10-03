@@ -150,7 +150,7 @@ public class BookingFinalizeService {
         for (String to : recipients) {
             outboxRepository.save(NotificationOutbox.builder()
                     .bookingId(booking.getBookingId())
-                    .orderId(order.getId().toString())
+                    .orderId(order.getId())
                     .kind("receipt_pdf")
                     .toAddress(to)
                     .template("receipt_pdf")
@@ -164,7 +164,7 @@ public class BookingFinalizeService {
         for (String to : trusteeAlertEmails()) {
             outboxRepository.save(NotificationOutbox.builder()
                     .bookingId(booking.getBookingId())
-                    .orderId(order.getId().toString())
+                    .orderId(order.getId())
                     .kind("booking_alert")
                     .toAddress(to)
                     .template("booking_alert")

@@ -44,6 +44,8 @@ public class StaffApiController {
             Staff staff = currentStaff();
             Order.PaymentMethod method = "cash".equalsIgnoreCase(String.valueOf(body.get("paymentMethod")))
                     ? Order.PaymentMethod.cash : Order.PaymentMethod.upi;
+            log.info("[BOOKING] counter booking requested: staffId={} ({}) method={} mobile={}",
+                    staff.getId(), staff.getEmail(), method, body.get("mobile"));
 
             List<OrderService.CartLine> lines = new ArrayList<>();
             if (body.get("items") instanceof List<?> list) {
@@ -71,6 +73,8 @@ public class StaffApiController {
                 Object received = body.get("cashReceivedPaise");
                 int amount = order.getTotalAmount();
                 if (received != null && Integer.parseInt(String.valueOf(received)) != amount) {
+                    log.warn("[BOOKING] counter cash rejected for orderId={}: received={} expected={}",
+                            order.getId(), received, amount);
                     return ResponseEntity.badRequest().body(Map.of("error", "Cash received must equal exact amount"));
                 }
                 booking = finalizeService.finalizeCounterCash(order.getId(), amount, staff.getId());
@@ -88,9 +92,17 @@ public class StaffApiController {
             out.put("amountPaise", order.getTotalAmount());
             out.put("paymentMethod", method.name());
             out.put("receiptUrl", "/receipt/" + booking.getBookingId());
+            log.info("[BOOKING] counter booking issued by staffId={} ({}): {} -> bookingId={} amountPaise={} method={}",
+                    staff.getId(), staff.getEmail(), order.getId(), booking.getBookingId(),
+                    order.getTotalAmount(), method);
             return ResponseEntity.ok(out);
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            log.warn("[BOOKING] counter booking rejected: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", String.valueOf(e.getMessage())));
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            log.error("[BOOKING] counter booking FAILED unexpectedly", e);
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", "Could not issue the booking — see API logs"));
         }
     }
 
@@ -98,7 +110,7 @@ public class StaffApiController {
     public List<Map<String, Object>> myBookings() {
         Staff staff = currentStaff();
         List<Map<String, Object>> out = new ArrayList<>();
-        for (Booking b : bookingRepository.findAllOrderByBookingNoDesc()) {
+        for (Booking b : bookingRepository.findAllExcludingStatus(Order.Status.voided)) {
             Order o = b.getOrder();
             if (!Objects.equals(o.getCreatedBy(), staff.getId())) continue;
             Map<String, Object> row = new LinkedHashMap<>();
@@ -119,13 +131,15 @@ public class StaffApiController {
         try {
             return ResponseEntity.ok(receiptService.view(bookingId, true));
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            log.warn("[BOOKING] staff receipt lookup failed for {}: {}", bookingId, e.toString());
+            return ResponseEntity.badRequest().body(Map.of("error", String.valueOf(e.getMessage())));
         }
     }
 
     @GetMapping("/receipts/{bookingId}/pdf")
     public ResponseEntity<byte[]> receiptPdf(@PathVariable String bookingId) {
         byte[] pdf = receiptService.pdfForBookingId(bookingId);
+        log.info("[BOOKING] staff receipt PDF generated for {} ({} bytes)", bookingId, pdf.length);
         return ResponseEntity.ok()
                 .header("Content-Type", "application/pdf")
                 .header("Content-Disposition", "inline; filename=" + bookingId + ".pdf")

@@ -4,9 +4,12 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
-import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -18,6 +21,8 @@ import java.io.IOException;
  * and QR signatures.
  */
 public class RequestLoggingFilter extends OncePerRequestFilter {
+
+    private static final Logger log = LoggerFactory.getLogger(RequestLoggingFilter.class);
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
@@ -31,11 +36,11 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             String path = request.getRequestURI();
             if (!isNoisy(path)) {
                 if (status >= 500) {
-                    logger.error("[HTTP] {} {} -> {} ({} ms)", request.getMethod(), path, status, ms);
+                    log.error("[HTTP] {} {} -> {} ({} ms)", request.getMethod(), path, status, ms);
                 } else if (status >= 400) {
-                    logger.warn("[HTTP] {} {} -> {} ({} ms)", request.getMethod(), path, status, ms);
+                    log.warn("[HTTP] {} {} -> {} ({} ms)", request.getMethod(), path, status, ms);
                 } else {
-                    logger.info("[HTTP] {} {} -> {} ({} ms)", request.getMethod(), path, status, ms);
+                    log.info("[HTTP] {} {} -> {} ({} ms)", request.getMethod(), path, status, ms);
                 }
             }
         }
@@ -45,8 +50,9 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
         return path.startsWith("/actuator") || path.equals("/api/health") || path.startsWith("/favicon");
     }
 
-    @Component
-    public static class Registration {
+    @Configuration
+    static class Registration {
+        @Bean
         public FilterRegistrationBean<RequestLoggingFilter> requestLoggingFilter() {
             FilterRegistrationBean<RequestLoggingFilter> bean =
                     new FilterRegistrationBean<>(new RequestLoggingFilter());
