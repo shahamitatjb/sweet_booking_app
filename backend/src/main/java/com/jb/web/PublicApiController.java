@@ -47,6 +47,7 @@ public class PublicApiController {
         out.put("terms", texts.getOrDefault("terms", ""));
         out.put("thankYou", texts.getOrDefault("thank_you", "Thank you for your continued support"));
         out.put("privacyNotice", texts.getOrDefault("privacy_notice", ""));
+        out.put("maxPerItem", settingsService.maxPacketsPerItem());
         out.put("bookingEnabled", settingsService.withinWindow(now));
         out.put("windowOpen", settingsService.windowOpen() == null ? "" : settingsService.windowOpen().toString());
         out.put("windowClose", settingsService.windowClose() == null ? "" : settingsService.windowClose().toString());

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 
 const MESSAGES: Record<string, { title: string; body: string; tone: 'error' | 'muted' }> = {
   denied: {
@@ -32,6 +33,9 @@ export default function StaffLogin() {
 
   return (
     <main className="container">
+      <Link className="back-link" href="/">
+        ← Back to home
+      </Link>
       <div className="card">
         <h1>Staff login</h1>
         <p className="muted">Google sign-in for allowlisted committee emails only.</p>

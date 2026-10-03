@@ -21,6 +21,7 @@ type Config = {
   thankYou: string;
   privacyNotice: string;
   bookingEnabled: boolean;
+  maxPerItem: number;
   items: Item[];
 };
 
@@ -36,7 +37,7 @@ export default function BookPage() {
   const [accepted, setAccepted] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [preview, setPreview] = useState<{ packets: number; amountPaise: number; weightKg: number } | null>(null);
+  const [previewError, setPreviewError] = useState('');
 
   useEffect(() => {
     const saved = (localStorage.getItem('jb_lang') as Lang) || 'en';
@@ -48,15 +49,33 @@ export default function BookPage() {
   }, [lang]);
 
   useEffect(() => {
-    if (!cfg) return;
-    api<{ packets: number; amountPaise: number; weightKg: number }>('/api/public/orders/preview', {
+    if (cfg) document.title = cfg.title;
+  }, [cfg]);
+
+  // The server preview validates the customer details before it will count packets,
+  // so only ask for it once step 2 has been filled in correctly. Totals shown while
+  // choosing sweets are calculated locally from the selected quantities.
+  const detailsReady =
+    form.name.trim().length >= 3 &&
+    /^[6-9]\d{9}$/.test(form.mobile) &&
+    form.address.trim().length >= 10 &&
+    /^\d{6}$/.test(form.pinCode);
+
+  useEffect(() => {
+    if (!cfg || !detailsReady) {
+      setPreviewError('');
+      return;
+    }
+    api('/api/public/orders/preview', {
       method: 'POST',
       body: JSON.stringify({
         items: Object.entries(qty).map(([itemId, quantity]) => ({ itemId: Number(itemId), quantity })),
         ...form,
       }),
-    }).then(setPreview).catch(() => setPreview(null));
-  }, [qty, form, cfg]);
+    })
+      .then(() => setPreviewError(''))
+      .catch((e) => setPreviewError((e as Error).message));
+  }, [qty, form, cfg, detailsReady]);
 
   function setLangAndSave(l: Lang) {
     setLang(l);
@@ -118,8 +137,10 @@ export default function BookPage() {
     );
   }
 
-  const packets = preview?.packets ?? 0;
-  const amount = preview?.amountPaise ?? 0;
+  const packets = Object.values(qty).reduce((sum, n) => sum + (n > 0 ? n : 0), 0);
+  const amount = cfg.items.reduce((sum, it) => sum + it.pricePaise * (qty[it.id] || 0), 0);
+  const weightKg = cfg.items.reduce((sum, it) => sum + (it.weightKg || 0) * (qty[it.id] || 0), 0);
+  const maxPerItem = cfg.maxPerItem > 0 ? cfg.maxPerItem : 20;
 
   return (
     <main className="container">
@@ -161,18 +182,21 @@ export default function BookPage() {
                 className="qty"
                 type="number"
                 min={0}
-                max={20}
+                max={maxPerItem}
                 placeholder={t(lang, 'quantity')}
                 value={qty[item.id] ?? 0}
                 onChange={(e) =>
-                  setQty((q) => ({ ...q, [item.id]: Math.max(0, Number(e.target.value) || 0) }))
+                  setQty((q) => ({
+                    ...q,
+                    [item.id]: Math.min(maxPerItem, Math.max(0, Number(e.target.value) || 0)),
+                  }))
                 }
               />
             </div>
           ))}
           <div className="total-bar">
             <div>
-              <strong>{packets}</strong> {t(lang, 'packets')} · <strong>{(preview?.weightKg ?? 0).toFixed(2)}</strong>{' '}
+              <strong>{packets}</strong> {t(lang, 'packets')} · <strong>{weightKg.toFixed(2)}</strong>{' '}
               {t(lang, 'kg')} · <strong>{formatINR(amount)}</strong>
             </div>
             <button className="btn block" disabled={packets < 1} onClick={() => setStep(2)}>
@@ -251,6 +275,7 @@ export default function BookPage() {
             />
             <span>{t(lang, 'acceptTerms')}</span>
           </label>
+          {previewError && <div className="error">{previewError}</div>}
           <p>
             <strong>
               {packets} {t(lang, 'packets')} · {formatINR(amount)}
