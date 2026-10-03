@@ -1,0 +1,50 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: jb
+      POSTGRES_PASSWORD: jb
+      POSTGRES_DB: mithai
+    ports:
+      - "5432:5432"
+    volumes:
+      - jb_pg:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./database/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jb -d mithai"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./backend
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env          # GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / secrets
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      DATABASE_URL: jdbc:postgresql://db:5432/mithai
+      DATABASE_USERNAME: jb
+      DATABASE_PASSWORD: jb
+      OTP_PROVIDER: dev
+      EMAIL_PROVIDER: console
+      FRONTEND_ORIGIN: http://localhost:3000
+      RAZORPAY_MODE: test
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      API_PROXY_TARGET: http://api:8080
+      NEXT_PUBLIC_API_BASE_URL: /api
+    depends_on:
+      - api
+
+volumes:
+  jb_pg:

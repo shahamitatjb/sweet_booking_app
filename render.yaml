@@ -1,0 +1,70 @@
+# Render Blueprint — Diwali Sweets Booking (Mithai)
+# Demo: Free tier (cold starts OK). Production: switch both services to paid
+# and point DATABASE_URL at paid Neon (or Render Postgres) before go-live.
+
+services:
+  # Next.js public + staff UI
+  - type: web
+    name: jb-frontend
+    runtime: node
+    plan: free          # production: starter or standard
+    buildCommand: cd frontend && npm ci && npm run build
+    startCommand: cd frontend && npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_API_BASE_URL
+        # Browser calls go through Next rewrites to the API service
+        value: /api
+      - key: API_PROXY_TARGET
+        # Server-side rewrite target (Render internal URL after first deploy)
+        sync: false
+      - key: PORT
+        value: "10000"
+    healthCheckPath: /api/health
+
+  # Spring Boot API
+  - type: web
+    name: jb-api
+    runtime: java
+    plan: free          # production: starter (min) or standard 1c-2g for booking window
+    buildCommand: cd backend && mvn -q -DskipTests package
+    startCommand: cd backend && java -Xmx350m -Xss512k -XX:+UseContainerSupport -XX:TieredStopAtLevel=1 -XX:+UseSerialGC -Dspring.jmx.enabled=false -jar target/jb-api-0.1.0.jar
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: prod
+      - key: DATABASE_URL
+        sync: false        # Neon connection string (jdbc:postgresql://...)
+      - key: DATABASE_USERNAME
+        sync: false
+      - key: DATABASE_PASSWORD
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: QR_HMAC_SECRET
+        generateValue: true
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      - key: RAZORPAY_MODE
+        value: test       # production: live
+      - key: OTP_PROVIDER
+        value: email      # production: sms once DLT approved; admin can switch
+      - key: EMAIL_PROVIDER
+        value: resend
+      - key: EMAIL_FROM
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RECEIPT_CC_EMAILS
+        sync: false       # comma-separated: Amit Shah, Shailesh bhai
+      - key: FRONTEND_ORIGIN
+        sync: false     # set to https://jb-frontend-xxxx.onrender.com (never "*"; used for CORS + post-login redirects)
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+    healthCheckPath: /api/health

@@ -1,0 +1,84 @@
+package com.jb.service;
+
+import com.jb.domain.Order;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.json.JSONObject;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import java.util.Map;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class RazorpayService {
+    @Value("${jb.razorpay-mode:test}")
+    private String mode;
+
+    @Value("${jb.razorpay-key-id:}")
+    private String keyId;
+
+    @Value("${jb.razorpay-key-secret:}")
+    private String keySecret;
+
+    @Value("${jb.razorpay-webhook-secret:}")
+    private String webhookSecret;
+
+    public boolean enabled() {
+        return keyId != null && !keyId.isBlank() && keySecret != null && !keySecret.isBlank();
+    }
+
+    public Map<String, Object> createOrder(Order order) {
+        if (!enabled()) {
+            log.error("[PAY] Razorpay keys not configured (RAZORPAY_KEY_ID/SECRET) — order {} cannot be paid online",
+                    order.getId());
+            throw new IllegalStateException("Razorpay keys not configured. Set RAZORPAY_KEY_ID/SECRET for online payments.");
+        }
+        log.info("[PAY] creating Razorpay order for orderId={} amountPaise={} currency=INR mode={}",
+                order.getId(), order.getTotalAmount(), mode);
+        try {
+            com.razorpay.RazorpayClient client = new com.razorpay.RazorpayClient(keyId, keySecret);
+            JSONObject request = new JSONObject();
+            request.put("amount", order.getTotalAmount());
+            request.put("currency", "INR");
+            request.put("receipt", "jb_" + order.getId());
+            JSONObject notes = new JSONObject();
+            notes.put("order_id", order.getId().toString());
+            request.put("notes", notes);
+            com.razorpay.Order rzpOrder = client.orders.create(request);
+            log.info("[PAY] Razorpay order created: gatewayOrderId={} for localOrderId={}",
+                    rzpOrder.get("id"), order.getId());
+            return Map.of(
+                    "gatewayOrderId", String.valueOf(rzpOrder.get("id")),
+                    "amount", order.getTotalAmount(),
+                    "currency", "INR",
+                    "keyId", keyId,
+                    "mode", mode
+            );
+        } catch (Exception e) {
+            log.error("[PAY] Razorpay order create FAILED for localOrderId={} amountPaise={}",
+                    order.getId(), order.getTotalAmount(), e);
+            throw new IllegalStateException("Razorpay order create failed: " + e.getMessage(), e);
+        }
+    }
+
+    public boolean verifyWebhookSignature(String body, String signatureHeader) {
+        if (webhookSecret == null || webhookSecret.isBlank()) {
+            log.warn("[PAY] Webhook secret missing — rejecting webhook (bodyBytes={})",
+                    body == null ? 0 : body.length());
+            return false;
+        }
+        try {
+            boolean ok = com.razorpay.Utils.verifyWebhookSignature(body, signatureHeader, webhookSecret);
+            if (!ok) {
+                log.warn("[PAY] Webhook signature INVALID — rejected (bodyBytes={}, signaturePresent={})",
+                        body == null ? 0 : body.length(), signatureHeader != null);
+            }
+            return ok;
+        } catch (Exception e) {
+            log.error("[PAY] Webhook signature verify error", e);
+            return false;
+        }
+    }
+}

@@ -1,0 +1,61 @@
+spring:
+  application:
+    name: jb-api
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
+  # Load the repo-root .env (and backend/.env if present) as config data.
+  # OS environment variables still win over these values.
+  config:
+    import:
+      - "optional:file:./.env[.properties]"
+      - "optional:file:../.env[.properties]"
+      - "optional:file:../../.env[.properties]"
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/mithai}
+    username: ${DATABASE_USERNAME:jb}
+    password: ${DATABASE_PASSWORD:jb}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: false   # schema applied via database/schema.sql on Neon/local; enable for prod if preferred
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: ${GOOGLE_CLIENT_ID:placeholder}
+            client-secret: ${GOOGLE_CLIENT_SECRET:placeholder}
+            scope: openid,email,profile
+
+server:
+  port: ${PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+jb:
+  qr-hmac-secret: ${QR_HMAC_SECRET:dev-only-change-me-32bytes-min!!}
+  qr-key-id: ${QR_KEY_ID:k1}
+  jwt-secret: ${JWT_SECRET:dev-jwt-secret-change-me-32bytes-minimum!}
+  jwt-ttl-minutes: 480
+  frontend-origin: ${FRONTEND_ORIGIN:http://localhost:3000}
+  otp-provider: ${OTP_PROVIDER:email}   # email | sms | dev
+  otp-ttl-minutes: 5
+  email-provider: ${EMAIL_PROVIDER:console}  # console | resend
+  email-from: ${EMAIL_FROM:bookings@example.com}
+  resend-api-key: ${RESEND_API_KEY:}
+  receipt-cc-emails: ${RECEIPT_CC_EMAILS:}
+  razorpay-mode: ${RAZORPAY_MODE:test}
+  razorpay-key-id: ${RAZORPAY_KEY_ID:}
+  razorpay-key-secret: ${RAZORPAY_KEY_SECRET:}
+  razorpay-webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
+  booking-enabled-override: ${BOOKING_ENABLED_OVERRIDE:}   # empty = use DB setting
+
+logging:
+  level:
+    com.jb: INFO

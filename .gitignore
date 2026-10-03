@@ -1,0 +1,13 @@
+node_modules/
+.next/
+target/
+*.class
+*.log
+.env
+.env.local
+.DS_Store
+.idea/
+.vscode/
+*.iml
+frontend/next-env.d.ts
+client_secret_698294294859-7f9g5t9439m9cl1t2eurtamejhe0hc0e.apps.googleusercontent.com.json
