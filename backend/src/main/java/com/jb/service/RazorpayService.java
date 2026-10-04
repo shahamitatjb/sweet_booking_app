@@ -48,10 +48,13 @@ public class RazorpayService {
             notes.put("order_id", order.getId().toString());
             request.put("notes", notes);
             com.razorpay.Order rzpOrder = client.orders.create(request);
+            // Entity.get is generic (<T> T get(String)); wrapping it in String.valueOf(...) makes javac
+            // pick valueOf(char[]) and fail at runtime with "String cannot be cast to [C". Read via JSON.
+            String gatewayOrderId = rzpOrder.toJson().getString("id");
             log.info("[PAY] Razorpay order created: gatewayOrderId={} for localOrderId={}",
-                    rzpOrder.get("id"), order.getId());
+                    gatewayOrderId, order.getId());
             return Map.of(
-                    "gatewayOrderId", String.valueOf(rzpOrder.get("id")),
+                    "gatewayOrderId", gatewayOrderId,
                     "amount", order.getTotalAmount(),
                     "currency", "INR",
                     "keyId", keyId,

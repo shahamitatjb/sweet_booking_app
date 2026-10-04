@@ -34,17 +34,28 @@ export default function ReceiptPage({ params }: { params: { id: string } }) {
   const [data, setData] = useState<Receipt | null>(null);
   const [error, setError] = useState('');
   const [flags, setFlags] = useState({ fromCounter: false, justPaid: false });
+  const [qrSrc, setQrSrc] = useState('');
 
+  // Customers open their receipt with the private ?t= link they got after paying (or by email);
+  // without it the receipt is only available to signed-in staff.
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     setFlags({ fromCounter: q.get('from') === 'counter', justPaid: q.get('paid') === '1' });
-  }, []);
-
-  useEffect(() => {
-    fetch(`/api/public/receipts/${id}`)
-      .then((r) => r.json())
-      .then((j) => (j.error ? setError(j.error) : setData(j)))
-      .catch((e) => setError(String(e)));
+    const token = q.get('t');
+    const enc = encodeURIComponent(id);
+    const base = token ? `/api/public/receipts/${enc}` : `/api/staff/receipts/${enc}`;
+    const suffix = token ? `?t=${encodeURIComponent(token)}` : '';
+    setQrSrc(`${base}/qr.png${suffix}`);
+    fetch(`${base}${suffix}`, { credentials: 'include' })
+      .then(async (r) => {
+        const j = await r.json().catch(() => null);
+        if (!r.ok || !j || j.error) {
+          setError('Receipt not available');
+          return;
+        }
+        setData(j);
+      })
+      .catch(() => setError('Receipt not available'));
   }, [id]);
 
   if (error) {
@@ -53,7 +64,7 @@ export default function ReceiptPage({ params }: { params: { id: string } }) {
         <AppHeader title="Receipt" backHref="/" />
         <main className="container">
           <div className="card error">{error}</div>
-          <p className="muted">Signed-in staff can open receipts. Customers receive the PDF by email when configured.</p>
+          <p className="muted">Open your receipt with the link shown after payment or in your receipt email. Committee staff can open any receipt after signing in.</p>
         </main>
       </>
     );
@@ -87,7 +98,7 @@ export default function ReceiptPage({ params }: { params: { id: string } }) {
             )}
             <img
               className="qr-box"
-              src={`/api/public/receipts/${data.bookingId}/qr.png`}
+              src={qrSrc}
               alt="Scan to verify this receipt"
               width={113}
               height={113}

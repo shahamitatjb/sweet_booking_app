@@ -177,7 +177,7 @@ export default function BookPage() {
         },
       );
       const receiptUrl = done.receiptUrl || `/receipt/${done.bookingId}`;
-      router.push(done.transactionRefPending ? `${receiptUrl}?paid=1` : receiptUrl);
+      router.push(done.transactionRefPending ? `${receiptUrl}${receiptUrl.includes('?') ? '&' : '?'}paid=1` : receiptUrl);
     } catch (e) {
       setInfo('');
       showApiError(e);

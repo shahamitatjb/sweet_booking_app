@@ -117,6 +117,43 @@ public class ReceiptService {
                 .orElse(null);
     }
 
+    /**
+     * Customer view: only for whoever holds the booking's secret token (the QR signature),
+     * which they get after paying and in the receipt email. Booking IDs are sequential, so
+     * the ID alone must never be enough to read a customer's details.
+     */
+    @Transactional(readOnly = true)
+    public ReceiptView viewWithToken(String bookingId, String token) {
+        requireToken(bookingId, token);
+        return view(bookingId, true);
+    }
+
+    public byte[] qrPngWithToken(String bookingId, String token) {
+        requireToken(bookingId, token);
+        return qrPng(bookingId);
+    }
+
+    /** The customer's private receipt link: /receipt/{id}?t={token}. */
+    public String receiptPath(Booking booking) {
+        return "/receipt/" + booking.getBookingId() + "?t=" + booking.getQrSignature();
+    }
+
+    public String receiptUrl(String bookingId) {
+        Booking booking = bookingRepository.findByBookingId(bookingId)
+                .orElseThrow(() -> new IllegalArgumentException("Booking not found"));
+        String base = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        return base + receiptPath(booking);
+    }
+
+    private void requireToken(String bookingId, String token) {
+        Booking booking = bookingRepository.findByBookingId(bookingId)
+                .orElseThrow(() -> new IllegalArgumentException("Booking not found"));
+        if (token == null || token.isBlank() || !QrService.constantTimeEquals(booking.getQrSignature(), token)) {
+            log.warn("[BOOKING] receipt token rejected for {}", bookingId);
+            throw new IllegalArgumentException("Receipt token mismatch");
+        }
+    }
+
     /** PNG QR of the signed verification link; only for bookings that exist. */
     public byte[] qrPng(String bookingId) {
         Booking booking = bookingRepository.findByBookingId(bookingId)

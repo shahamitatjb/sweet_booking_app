@@ -2,6 +2,7 @@ package com.jb.web;
 
 import com.jb.domain.Booking;
 import com.jb.service.PaymentService;
+import com.jb.service.ReceiptService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -23,6 +24,7 @@ public class PublicPaymentController {
     public static final String GENERIC_FAILURE = "Payment could not be confirmed";
 
     private final PaymentService paymentService;
+    private final ReceiptService receiptService;
 
     public record VerifyRequest(String orderId, String razorpayOrderId, String razorpayPaymentId, String razorpaySignature) {}
 
@@ -43,7 +45,7 @@ public class PublicPaymentController {
             Booking booking = confirmed.booking();
             return ResponseEntity.ok(Map.of(
                     "bookingId", booking.getBookingId(),
-                    "receiptUrl", "/receipt/" + booking.getBookingId(),
+                    "receiptUrl", receiptService.receiptPath(booking),
                     "transactionRefPending", confirmed.bankReferencePending()));
         } catch (IllegalArgumentException | IllegalStateException e) {
             log.warn("[PAY] verify failed for orderId={}: {}", orderId, e.getMessage());

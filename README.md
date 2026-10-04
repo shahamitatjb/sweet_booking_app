@@ -10,6 +10,7 @@ Mobile-first booking app for a Pune community trust: online + counter bookings, 
 frontend/     Next.js 14 (App Router) — public booking, staff, admin, print CSS
 backend/      Spring Boot 3 / Java 21 — API, auth, payments, jobs, email outbox
 database/     schema.sql + seed.sql (local Docker / Neon)
+e2e/          Playwright UI tests (real browser, API and Postgres)
 render.yaml   Render Blueprint (two free web services for demo)
 docker-compose.yml  local Postgres + API + web
 ```
@@ -39,6 +40,19 @@ API_PROXY_TARGET=http://localhost:8080 npm run dev
 ```
 
 Open http://localhost:3000
+
+## Running tests
+
+CI (`.github/workflows/ci.yml`) runs all three layers on every pull request, on pushes to `master`, and on demand from the Actions tab.
+
+| Layer | Command | Needs |
+|---|---|---|
+| Backend unit tests | `cd backend && mvn test` | JDK 21 |
+| Backend integration tests (real Postgres) | `cd backend && mvn verify` | JDK 21, Docker |
+| Frontend unit tests | `cd frontend && npm test` | Node 20 |
+| UI tests (Playwright, desktop + phone) | `./e2e/run-local.sh` | JDK 21, Node 20, Docker |
+
+The UI tests start a throwaway Postgres on port 5433, the API on 8080 and the site on 3000. Staff sign-in uses a token signed with a test-only secret, so no Google account is needed. The real Razorpay payment test runs only when `RAZORPAY_TEST_KEY_ID` and `RAZORPAY_TEST_KEY_SECRET` (test-mode `rzp_test_` keys) are set; otherwise it is skipped.
 
 ## Deploy on Render (free tier for testing)
 
