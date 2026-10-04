@@ -62,6 +62,8 @@ const EMPTY_ITEM: Item = {
 
 const EMPTY_STAFF = { email: '', name: '', role: 'COUNTER', active: true };
 
+const DELETE_ALL_PHRASE = 'DELETE ALL BOOKINGS';
+
 // The API stores instants with an IST offset; datetime-local wants a naive value.
 function toInput(v: string): string {
   const m = (v || '').match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})/);
@@ -84,6 +86,8 @@ export default function AdminSettingsPage() {
   const [draft, setDraft] = useState<Item>(EMPTY_ITEM);
   const [staff, setStaff] = useState<StaffRow[]>([]);
   const [staffDraft, setStaffDraft] = useState({ ...EMPTY_STAFF });
+  const [deleteConfirm, setDeleteConfirm] = useState('');
+  const [deleting, setDeleting] = useState(false);
 
   function flash(msg: string) {
     setError('');
@@ -163,11 +167,30 @@ export default function AdminSettingsPage() {
     }
   }
 
+  async function deleteAllBookings() {
+    if (!window.confirm('Permanently delete ALL bookings, orders, payments, OTP codes and cash handovers? This cannot be undone.')) return;
+    setDeleting(true);
+    try {
+      const res = await api<{ deleted: Record<string, number> }>('/api/admin/bookings/delete-all', {
+        method: 'POST',
+        body: JSON.stringify({ confirm: deleteConfirm }),
+      });
+      setDeleteConfirm('');
+      flash(`Deleted ${res.deleted?.bookings ?? 0} bookings and ${res.deleted?.orders ?? 0} orders. Next booking will be JB-0001.`);
+    } catch (e) {
+      setError((e as Error).message);
+      show((e as Error).message, 'err');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   function patchItem(id: number | null, patch: Partial<Item>) {
     setItems((list) => list.map((it) => (it.id === id ? { ...it, ...patch } : it)));
   }
 
   const dirty = Object.keys(values).some((k) => values[k] !== loaded[k]);
+  const bookingsOpen = (loaded.booking_enabled || 'true').toLowerCase() === 'true';
 
   if (me === undefined) return <main className="container muted">Loading…</main>;
   if (!me) return <SignInRequired />;
@@ -495,6 +518,41 @@ export default function AdminSettingsPage() {
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section className="card" style={{ borderColor: 'var(--err)' }}>
+        <h2 style={{ color: 'var(--err)' }}>Danger zone</h2>
+        <p className="muted small">
+          Delete all bookings to clear test data before going live. This permanently removes every booking, order,
+          payment, notification, OTP code and cash handover, and resets booking IDs so the next one is JB-0001. The
+          audit log is kept and records who did this.
+        </p>
+        {bookingsOpen && (
+          <p className="error">Turn &quot;Bookings open&quot; off and save settings first.</p>
+        )}
+        <div className="form">
+          <label>
+            <span>
+              Type <strong>{DELETE_ALL_PHRASE}</strong> to confirm
+            </span>
+            <input
+              value={deleteConfirm}
+              onChange={(e) => setDeleteConfirm(e.target.value)}
+              placeholder={DELETE_ALL_PHRASE}
+              autoComplete="off"
+              aria-label="Delete all bookings confirmation"
+            />
+          </label>
+        </div>
+        <button
+          type="button"
+          className="btn"
+          style={{ background: 'var(--err)', marginTop: 8 }}
+          disabled={deleting || deleteConfirm.trim() !== DELETE_ALL_PHRASE || bookingsOpen}
+          onClick={deleteAllBookings}
+        >
+          {deleting ? 'Deleting…' : 'Delete all bookings'}
+        </button>
       </section>
       <Toast toast={toast} />
     </AdminShell>
