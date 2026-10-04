@@ -65,6 +65,8 @@ public class SecurityConfig {
                 .requestMatchers("/api/health", "/actuator/health").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/public/**").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/public/**").permitAll()
+                // Full customer details for a scanned booking: committee staff only.
+                .requestMatchers(HttpMethod.GET, "/api/verify/*/staff").hasAnyRole("ADMIN", "COUNTER")
                 .requestMatchers(HttpMethod.GET, "/api/verify/**").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/webhooks/**").permitAll()
                 .requestMatchers("/api/staff/**").hasAnyRole("ADMIN", "COUNTER")

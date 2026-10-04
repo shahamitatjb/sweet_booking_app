@@ -250,6 +250,11 @@ public abstract class IntegrationTestBase {
                 "SELECT qr_signature FROM bookings WHERE booking_id = ?", String.class, bookingId);
     }
 
+    /** The secret that unlocks a booking's public receipt (its QR signature). */
+    protected String receiptToken(String bookingId) {
+        return jdbc.queryForObject("SELECT qr_signature FROM bookings WHERE booking_id = ?", String.class, bookingId);
+    }
+
     protected List<String> auditActions() {
         return jdbc.queryForList("SELECT action FROM audit_log ORDER BY id", String.class);
     }

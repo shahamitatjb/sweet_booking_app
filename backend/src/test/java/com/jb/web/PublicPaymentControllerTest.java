@@ -2,6 +2,7 @@ package com.jb.web;
 
 import com.jb.domain.Booking;
 import com.jb.service.PaymentService;
+import com.jb.service.ReceiptService;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
@@ -17,7 +18,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class PublicPaymentControllerTest {
     private static final UUID ORDER_ID = UUID.fromString("11111111-2222-3333-4444-555555555555");
     private final PaymentService payments = mock(PaymentService.class);
-    private final MockMvc mvc = MockMvcBuilders.standaloneSetup(new PublicPaymentController(payments)).build();
+    private final ReceiptService receipts = mock(ReceiptService.class);
+    private final MockMvc mvc = MockMvcBuilders.standaloneSetup(new PublicPaymentController(payments, receipts)).build();
 
     private static String body() {
         return """
@@ -26,14 +28,15 @@ class PublicPaymentControllerTest {
     }
 
     @Test
-    void verifiedPaymentReturnsBookingIdAndReceiptUrl() throws Exception {
+    void verifiedPaymentReturnsBookingIdAndPrivateReceiptUrl() throws Exception {
         when(payments.verifyAndFinalize(ORDER_ID, "order_abc", "pay_123", "sig"))
-                .thenReturn(Booking.builder().bookingId("JB-0007").build());
+                .thenReturn(Booking.builder().bookingId("JB-0007").qrSignature("secretTok").build());
+        when(receipts.receiptPath(any())).thenCallRealMethod();
 
         mvc.perform(post("/api/public/payments/verify").contentType(MediaType.APPLICATION_JSON).content(body()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.bookingId").value("JB-0007"))
-                .andExpect(jsonPath("$.receiptUrl").value("/receipt/JB-0007"));
+                .andExpect(jsonPath("$.receiptUrl").value("/receipt/JB-0007?t=secretTok"));
     }
 
     @Test

@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { resetAndSeed, type Seed } from '../support/db';
 import { counterCashBooking, qrToken, staffPost } from '../support/api';
+import { signIn } from '../support/auth';
 
 let seed: Seed;
 test.beforeEach(async () => {
@@ -32,18 +33,41 @@ test('forged and cancelled receipts are rejected', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Booking cancelled' })).toBeVisible();
 });
 
-test('the receipt page shows the booking and its QR code', async ({ page }) => {
+test("the customer's private link shows their receipt and QR code", async ({ page }) => {
   const id = await counterCashBooking(seed, [
     [seed.ladooId, 2],
     [seed.barfiId, 1],
   ]);
+  const token = (await qrToken(id)).split('.')[1];
 
-  await page.goto(`/receipt/${id}`);
+  await page.goto(`/receipt/${id}?t=${token}`);
   await expect(page.getByText(`Booking ID: ${id}`)).toBeVisible();
+  await expect(page.getByText('Name: Ravi Kumar')).toBeVisible();
   await expect(page.getByText('Booked by: Chetan Counter')).toBeVisible();
   await expect(page.locator('.receipt-table tbody tr')).toHaveCount(2);
   await expect(page.getByText('Total: ₹800.00')).toBeVisible();
   const qr = page.getByAltText('Scan to verify this receipt');
   await expect(qr).toBeVisible();
-  expect(await qr.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+  await expect.poll(() => qr.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+});
+
+test('a guessed booking ID shows nothing about the customer', async ({ page }) => {
+  const id = await counterCashBooking(seed, [[seed.ladooId, 1]]);
+
+  for (const url of [`/receipt/${id}`, `/receipt/${id}?t=guess`]) {
+    await page.goto(url);
+    await expect(page.getByText('Receipt not available')).toBeVisible();
+    await expect(page.getByText('Ravi Kumar')).toHaveCount(0);
+    await expect(page.getByText('9876543210')).toHaveCount(0);
+  }
+});
+
+test('signed-in staff open any receipt without the link', async ({ context, page }) => {
+  const id = await counterCashBooking(seed, [[seed.ladooId, 1]]);
+  await signIn(context, seed.admin);
+
+  await page.goto(`/receipt/${id}`);
+  await expect(page.getByText('Name: Ravi Kumar')).toBeVisible();
+  const qr = page.getByAltText('Scan to verify this receipt');
+  await expect.poll(() => qr.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
 });
