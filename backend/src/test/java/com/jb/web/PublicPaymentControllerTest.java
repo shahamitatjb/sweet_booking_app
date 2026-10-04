@@ -30,13 +30,15 @@ class PublicPaymentControllerTest {
     @Test
     void verifiedPaymentReturnsBookingIdAndPrivateReceiptUrl() throws Exception {
         when(payments.verifyAndFinalize(ORDER_ID, "order_abc", "pay_123", "sig"))
-                .thenReturn(Booking.builder().bookingId("JB-0007").qrSignature("secretTok").build());
+                .thenReturn(new PaymentService.Confirmed(
+                        Booking.builder().bookingId("JB-0007").qrSignature("secretTok").build(), true));
         when(receipts.receiptPath(any())).thenCallRealMethod();
 
         mvc.perform(post("/api/public/payments/verify").contentType(MediaType.APPLICATION_JSON).content(body()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.bookingId").value("JB-0007"))
-                .andExpect(jsonPath("$.receiptUrl").value("/receipt/JB-0007?t=secretTok"));
+                .andExpect(jsonPath("$.receiptUrl").value("/receipt/JB-0007?t=secretTok"))
+                .andExpect(jsonPath("$.transactionRefPending").value(true));
     }
 
     @Test

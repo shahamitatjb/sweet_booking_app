@@ -74,7 +74,7 @@ class OnlineBookingFlowIT extends IntegrationTestBase {
     }
 
     @Test
-    void qrScanIsGenuineThenWarnsOnRepeatScans() throws Exception {
+    void qrScanIsGenuineShowsTheBookingAndCountsScansSilently() throws Exception {
         JsonNode order = createOnlineOrder(ladoo.getId(), 3);
         postJson("/api/public/payments/verify", checkoutSuccess(order, "pay_IT1")).andExpect(status().isOk());
         String token = qrToken("JB-0001");
@@ -83,11 +83,14 @@ class OnlineBookingFlowIT extends IntegrationTestBase {
                 .andExpect(jsonPath("$.status").value("genuine"))
                 .andExpect(jsonPath("$.totalPackets").value(3))
                 .andExpect(jsonPath("$.scanCount").value(1))
+                .andExpect(jsonPath("$.receipt.bookingId").value("JB-0001"))
+                .andExpect(jsonPath("$.receipt.items[0].quantity").value(3))
+                .andExpect(jsonPath("$.receipt.transactionRefPending").value(true))
                 .andExpect(jsonPath("$.warning").doesNotExist());
         mvc.perform(get("/api/verify/" + token))
                 .andExpect(jsonPath("$.status").value("genuine"))
                 .andExpect(jsonPath("$.scanCount").value(2))
-                .andExpect(jsonPath("$.warning").exists());
+                .andExpect(jsonPath("$.warning").doesNotExist());
     }
 
     @Test

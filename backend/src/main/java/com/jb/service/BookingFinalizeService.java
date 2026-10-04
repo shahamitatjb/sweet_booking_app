@@ -27,6 +27,7 @@ public class BookingFinalizeService {
     private final AuditService auditService;
     private final NotificationOutboxRepository outboxRepository;
     private final SettingsService settingsService;
+    private final QrService qrService;
 
     @Transactional
     public Booking finalizeOnline(UUID orderId, String gatewayPaymentId, int amountPaise) {
@@ -41,6 +42,26 @@ public class BookingFinalizeService {
     @Transactional
     public Booking finalizeCounterUpi(UUID orderId, int amountPaise, Long staffId, String upiRef) {
         return finalize(orderId, Order.PaymentMethod.upi, null, amountPaise, upiRef, staffId);
+    }
+
+    /**
+     * Stores the bank reference of an online payment once it is known (Razorpay fetch or webhook).
+     * Never overwrites one already stored. Returns true when the order has a reference afterwards.
+     */
+    @Transactional
+    public boolean recordBankReference(UUID orderId, String bankReference) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("Order not found: " + orderId));
+        if (order.getUpiReference() != null && !order.getUpiReference().isBlank()) {
+            return true;
+        }
+        if (bankReference == null || bankReference.isBlank()) {
+            return false;
+        }
+        order.setUpiReference(bankReference);
+        orderRepository.save(order);
+        log.info("[PAY] bank reference stored for orderId={}: {}", orderId, bankReference);
+        return true;
     }
 
     @Transactional
@@ -90,7 +111,7 @@ public class BookingFinalizeService {
 
         String bookingId = formatBookingId(next);
         Instant now = Instant.now();
-        String signature = QrService.sign(bookingId, order.getTotalAmount(), now.getEpochSecond(),
+        String signature = qrService.sign(bookingId, order.getTotalAmount(), now.getEpochSecond(),
                 settingsService.getOrDefault("qr_key_id", "en", "k1"));
         log.info("[BOOKING] sequence allocated: counter {} -> {} (bookingId={})", prev, next, bookingId);
 

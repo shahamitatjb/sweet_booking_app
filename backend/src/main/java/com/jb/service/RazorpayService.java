@@ -7,7 +7,10 @@ import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -81,6 +84,99 @@ public class RazorpayService {
             log.error("[PAY] payment signature verify error for gatewayOrderId={}", gatewayOrderId, e);
             return false;
         }
+    }
+
+    /** The fields of a Razorpay payment that decide whether a booking may be confirmed. */
+    public record GatewayPayment(String id, String gatewayOrderId, String status, int amountPaise,
+                                 String currency, String bankReference) {
+        public static final String CAPTURED = "captured";
+        public static final String AUTHORIZED = "authorized";
+
+        public static GatewayPayment from(JSONObject entity) {
+            return new GatewayPayment(
+                    entity.optString("id", ""),
+                    entity.isNull("order_id") ? "" : entity.optString("order_id", ""),
+                    entity.optString("status", ""),
+                    entity.optInt("amount", -1),
+                    entity.optString("currency", ""),
+                    RazorpayService.bankReference(entity).orElse(null));
+        }
+
+        public boolean captured() { return CAPTURED.equals(status); }
+        public boolean authorized() { return AUTHORIZED.equals(status); }
+    }
+
+    /** Current state of one payment, straight from Razorpay. */
+    public GatewayPayment fetchPayment(String paymentId) {
+        try {
+            com.razorpay.Payment payment = client().payments.fetch(paymentId);
+            GatewayPayment p = GatewayPayment.from(payment.toJson());
+            log.info("[PAY] fetched paymentId={} status={} amountPaise={} gatewayOrderId={}",
+                    p.id(), p.status(), p.amountPaise(), p.gatewayOrderId());
+            return p;
+        } catch (Exception e) {
+            log.warn("[PAY] payment fetch FAILED for paymentId={}: {}", paymentId, e.toString());
+            throw new GatewayUnavailableException("Razorpay payment fetch failed", e);
+        }
+    }
+
+    /** Collects an authorized payment. Razorpay answers with the payment, now captured. */
+    public GatewayPayment capture(String paymentId, int amountPaise) {
+        try {
+            JSONObject request = new JSONObject();
+            request.put("amount", amountPaise);
+            request.put("currency", "INR");
+            com.razorpay.Payment payment = client().payments.capture(paymentId, request);
+            GatewayPayment p = GatewayPayment.from(payment.toJson());
+            log.info("[PAY] capture requested for paymentId={} amountPaise={} -> status={}",
+                    paymentId, amountPaise, p.status());
+            return p;
+        } catch (Exception e) {
+            log.warn("[PAY] capture FAILED for paymentId={}: {}", paymentId, e.toString());
+            throw new GatewayUnavailableException("Razorpay capture failed", e);
+        }
+    }
+
+    /** Every payment attempt Razorpay holds for one of our gateway orders. */
+    public List<GatewayPayment> paymentsForOrder(String gatewayOrderId) {
+        try {
+            List<GatewayPayment> out = new ArrayList<>();
+            for (com.razorpay.Payment p : client().orders.fetchPayments(gatewayOrderId)) {
+                out.add(GatewayPayment.from(p.toJson()));
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("[PAY] payments fetch FAILED for gatewayOrderId={}: {}", gatewayOrderId, e.toString());
+            throw new GatewayUnavailableException("Razorpay order payments fetch failed", e);
+        }
+    }
+
+    private com.razorpay.RazorpayClient client() throws com.razorpay.RazorpayException {
+        if (!enabled()) {
+            throw new IllegalStateException("Razorpay keys not configured");
+        }
+        return new com.razorpay.RazorpayClient(keyId, keySecret);
+    }
+
+    /**
+     * Reads the bank reference from a Razorpay payment entity: the RRN/UTR for UPI (and most cards),
+     * the bank transaction id for netbanking, the wallet transaction id, or else the card auth code.
+     */
+    public static Optional<String> bankReference(JSONObject paymentEntity) {
+        if (paymentEntity == null) {
+            return Optional.empty();
+        }
+        JSONObject acquirer = paymentEntity.optJSONObject("acquirer_data");
+        if (acquirer == null) {
+            return Optional.empty();
+        }
+        for (String key : new String[] {"rrn", "bank_transaction_id", "transaction_id", "auth_code"}) {
+            String v = acquirer.isNull(key) ? "" : acquirer.optString(key, "").trim();
+            if (!v.isEmpty()) {
+                return Optional.of(v);
+            }
+        }
+        return Optional.empty();
     }
 
     public boolean verifyWebhookSignature(String body, String signatureHeader) {

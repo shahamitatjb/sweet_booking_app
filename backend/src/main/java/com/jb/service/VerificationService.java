@@ -21,6 +21,7 @@ public class VerificationService {
     private final BookingRepository bookingRepository;
     private final OrderItemRepository orderItemRepository;
     private final QrService qrService;
+    private final ReceiptService receiptService;
 
     @Transactional
     public Map<String, Object> verify(String bookingId, String signature) {
@@ -45,6 +46,7 @@ public class VerificationService {
                 booking.getBookingId(),
                 order.getTotalAmount(),
                 booking.getConfirmedAt().getEpochSecond(),
+                booking.getQrKeyId(),
                 signature);
         boolean paid = order.getStatus() == Order.Status.paid;
         if (!sigOk || !paid) {
@@ -69,12 +71,12 @@ public class VerificationService {
         out.put("totalPackets", packets);
         out.put("firstScannedAt", booking.getFirstScannedAt());
         out.put("scanCount", booking.getScanCount());
+        // Only a holder of the signed QR link reaches this point, and the printed receipt already shows these details.
+        out.put("receipt", receiptService.view(booking.getBookingId(), true));
         log.info("[BOOKING] QR verify GENUINE for {}: scanCount={} packets={} (first scan {})",
                 bookingId, booking.getScanCount(), packets, booking.getFirstScannedAt());
         if (booking.getScanCount() > 1) {
-            log.warn("[BOOKING] QR {} scanned more than once (scanCount={}) — verify name/mobile at counter",
-                    bookingId, booking.getScanCount());
-            out.put("warning", "This receipt has been scanned before. Verify name and last 4 digits of mobile with the person.");
+            log.warn("[BOOKING] QR {} scanned more than once (scanCount={})", bookingId, booking.getScanCount());
         }
         return out;
     }

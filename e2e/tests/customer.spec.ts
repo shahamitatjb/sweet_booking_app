@@ -150,7 +150,7 @@ test.describe('real Razorpay test-mode payment', () => {
     const bank = await page.waitForEvent('popup', { timeout: 60_000 });
     await bank.getByRole('button', { name: /Success/i }).click();
 
-    await expect(page).toHaveURL(/\/receipt\/JB-0001\?t=[\w-]+$/, { timeout: 90_000 });
+    await expect(page).toHaveURL(/\/receipt\/JB-0001\?t=[\w-]+(&paid=1)?$/, { timeout: 90_000 });
     await expect(page.getByText('Booking ID:')).toBeVisible();
     expect(await scalar<string>("SELECT status FROM orders WHERE channel = 'online'")).toBe('paid');
   });

@@ -49,12 +49,12 @@ class CounterBookingIT extends IntegrationTestBase {
     @Test
     void upiBookingKeepsTheReference() throws Exception {
         Map<String, Object> body = counterBody("upi", barfi.getId(), 1);
-        body.put("upiReference", "UPI-REF-42");
+        body.put("upiReference", "412345678901");
 
         staffPost(counter, "/api/staff/counter/bookings", body)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paymentMethod").value("upi"));
-        assertThat(jdbc.queryForObject("SELECT upi_reference FROM orders", String.class)).isEqualTo("UPI-REF-42");
+        assertThat(jdbc.queryForObject("SELECT upi_reference FROM orders", String.class)).isEqualTo("412345678901");
     }
 
     @Test
@@ -76,7 +76,9 @@ class CounterBookingIT extends IntegrationTestBase {
         var order = createOnlineOrder(barfi.getId(), 1);
         postJson("/api/public/payments/verify", checkoutSuccess(order, "pay_IT1"))
                 .andExpect(jsonPath("$.bookingId").value("JB-0002"));
-        staffPost(admin, "/api/staff/counter/bookings", counterBody("upi", ladoo.getId(), 1))
+        Map<String, Object> upi = counterBody("upi", ladoo.getId(), 1);
+        upi.put("upiReference", "412345678901");
+        staffPost(admin, "/api/staff/counter/bookings", upi)
                 .andExpect(jsonPath("$.bookingId").value("JB-0003"));
     }
 

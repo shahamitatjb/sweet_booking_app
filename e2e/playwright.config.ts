@@ -37,6 +37,9 @@ export default defineConfig({
       stderr: 'pipe',
       env: {
         SPRING_PROFILES_ACTIVE: 'e2e',
+        // The suite books many times with one mobile number from one machine.
+        ORDER_LIMIT_PER_MOBILE_PER_HOUR: '10000',
+        ORDER_LIMIT_PER_IP_PER_HOUR: '10000',
         PORT: new URL(E2E.apiUrl).port,
         DATABASE_URL: `jdbc:postgresql://${db.host}:${db.port}/${db.database}`,
         DATABASE_USERNAME: db.user,

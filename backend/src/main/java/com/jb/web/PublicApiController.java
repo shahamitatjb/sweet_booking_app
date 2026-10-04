@@ -25,6 +25,9 @@ public class PublicApiController {
     private final OrderService orderService;
     private final RazorpayService razorpayService;
     private final AuditService auditService;
+    private final OrderRateLimiter orderRateLimiter;
+
+    static final String TOO_MANY_ORDERS = "Too many booking attempts. Please wait a while and try again.";
 
     @GetMapping("/config")
     public Map<String, Object> config(@RequestParam(defaultValue = "en") String lang) {
@@ -148,6 +151,9 @@ public class PublicApiController {
             OrderService.Customer customer = RequestParsing.parseCustomer(body);
             orderService.validateCustomer(customer, emailRequiredForOtp());
             requireOtpIfEnabled(body, customer);
+            if (!orderRateLimiter.tryAcquire(customer.mobile(), clientIp(request))) {
+                return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(Map.of("error", TOO_MANY_ORDERS));
+            }
             log.info("[BOOKING] step 1/3 createOnlineOrder: mobile={} name={} lines={} pin={}",
                     customer.mobile(), customer.name(), lines.size(), customer.pinCode());
             Order order = orderService.createOnlineOrder(lines, customer, true);
@@ -182,6 +188,15 @@ public class PublicApiController {
             return ResponseEntity.internalServerError()
                     .body(Map.of("error", "Could not create the booking — see API logs"));
         }
+    }
+
+    /** The customer's address: first X-Forwarded-For hop (set by the proxies in front), else the socket peer. */
+    static String clientIp(HttpServletRequest request) {
+        String forwarded = request.getHeader("X-Forwarded-For");
+        if (forwarded != null && !forwarded.isBlank()) {
+            return forwarded.split(",")[0].trim();
+        }
+        return request.getRemoteAddr();
     }
 
     private boolean emailRequiredForOtp() {

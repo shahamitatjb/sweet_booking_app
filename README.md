@@ -25,6 +25,7 @@ docker compose up -d db
 cd backend
 # if no mvnw yet: mvn -q -DskipTests package
 # Run with env from ../.env.example
+export SPRING_PROFILES_ACTIVE=local   # without it the API runs as production and needs real secrets
 export DATABASE_URL=jdbc:postgresql://localhost:5432/mithai
 export DATABASE_USERNAME=jb
 export DATABASE_PASSWORD=jb
@@ -85,7 +86,7 @@ Postgres expires in 30 days, which is why Neon is used.
 |---|---|
 | Render | Upgrade `jb-frontend` and `jb-api` to **Starter** (min) or **Standard 1C-2G** for comfort |
 | Neon | Upgrade to Launch/pay-as-you-go; enable backups |
-| Razorpay | Trust merchant account + live keys; webhook URL `https://<api>/api/webhooks/razorpay` |
+| Razorpay | Trust merchant account + live keys; webhook URL `https://<api>/api/webhooks/razorpay` with events `payment.authorized`, `payment.captured`, `refund.created`, `refund.processed`, `refund.failed`, `payment.dispute.created`; `RAZORPAY_WEBHOOK_SECRET` set (the API refuses to start in production without it) |
 | OTP | Set `OTP_PROVIDER=sms` only after DLT + provider live; until then **email OTP** (admin setting `otp_provider`) |
 | Email | Resend (or similar) + real from-domain; set `RECEIPT_CC_EMAILS` to Amit Shah + Shailesh bhai |
 | Admins | `BOOTSTRAP_ADMIN_EMAILS` only seeds an empty staff table; manage the rest in Admin → Settings |
@@ -107,7 +108,7 @@ Postgres expires in 30 days, which is why Neon is used.
 
 ## Go-live checklist
 
-- [ ] Trust Razorpay merchant (not personal) + webhook secret
+- [ ] Trust Razorpay merchant (not personal) + webhook secret, with the refund and dispute events enabled
 - [ ] DLT SMS templates + OTP provider OR documented email-OTP interim
 - [ ] Email sending identity + deliverability test
 - [ ] Staff Google emails loaded; 2FA recommended on their Google accounts

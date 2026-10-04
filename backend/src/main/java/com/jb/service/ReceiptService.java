@@ -26,6 +26,9 @@ import com.openhtmltopdf.svgsupport.BatikSVGDrawer;
 @Slf4j
 @Service
 public class ReceiptService {
+    /** Stored on counter UPI bookings before the UTR was captured; not a real transaction id. */
+    public static final String LEGACY_UPI_PLACEHOLDER = "UPI-STAFF-CONFIRMED";
+
     private static final DateTimeFormatter IST =
             DateTimeFormatter.ofPattern("dd MMM yyyy, hh:mm a").withZone(ZoneId.of("Asia/Kolkata"));
 
@@ -88,8 +91,22 @@ public class ReceiptService {
                 verifyUrl,
                 booking.getQrSignature(),
                 order.getStatus().name(),
-                order.getVoidReason()
+                order.getVoidReason(),
+                transactionRef(order),
+                transactionRefPending(order)
         );
+    }
+
+    /** UPI UTR (counter) or bank reference (online) for reconciliation; null when there is none to show. */
+    public static String transactionRef(Order order) {
+        String ref = order.getUpiReference();
+        if (ref == null || ref.isBlank() || LEGACY_UPI_PLACEHOLDER.equals(ref)) return null;
+        return ref;
+    }
+
+    /** Online payment whose bank reference has not arrived yet; the Razorpay webhook fills it in. */
+    public static boolean transactionRefPending(Order order) {
+        return order.getPaymentMethod() == Order.PaymentMethod.gateway && transactionRef(order) == null;
     }
 
     /** Display name of the staff member who issued a counter booking; falls back to their email. */
@@ -177,6 +194,9 @@ public class ReceiptService {
                 + java.util.Base64.getEncoder().encodeToString(qrImageService.png(v.verifyUrl())) + "\"/>";
         String takenBy = v.takenByName() == null ? "" :
                 "<br/><strong>Booked by:</strong> " + esc(v.takenByName());
+        String txnRef = v.transactionRef() != null
+                ? "<br/><strong>Transaction ref:</strong> " + esc(v.transactionRef())
+                : v.transactionRefPending() ? "<br/><strong>Transaction ref:</strong> " + TRANSACTION_REF_PENDING : "";
         String cancelled = !"voided".equals(v.status()) ? "" :
                 "<p style=\"border:2px solid #b00000;font-weight:bold;padding:6px;\">CANCELLED"
                         + (v.voidReason() == null || v.voidReason().isBlank() ? "" : " — " + esc(v.voidReason()))
@@ -196,20 +216,21 @@ public class ReceiptService {
               %s
               <p><strong>Booking ID:</strong> %s<br/>
               <strong>Booked at (IST):</strong> %s<br/>
-              <strong>Channel:</strong> %s · <strong>Payment:</strong> %s%s</p>
+              <strong>Channel:</strong> %s · <strong>Payment:</strong> %s%s%s</p>
               %s
               <table><tr><th>Item</th><th>Pack</th><th>Packets</th><th>Amount</th></tr>%s</table>
               <p><strong>Total packets:</strong> %d<br/><strong>Total:</strong> %s</p>
-              <p class="muted">Scan to verify: %s<br/>Signature: %s</p>
               <pre class="muted">%s</pre>
               <p>%s</p>
             </body></html>
             """.formatted(
                 esc(v.title()), cancelled, qr, esc(v.bookingId()), esc(v.bookedAtIst()),
-                esc(v.channel()), esc(v.paymentMode() == null ? "-" : v.paymentMode()), takenBy,
+                esc(v.channel()), esc(v.paymentMode() == null ? "-" : v.paymentMode()), txnRef, takenBy,
                 pii, lines, v.totalPackets(), formatPaise(v.totalAmount()),
-                esc(v.verifyUrl()), esc(v.signature()), esc(v.terms()), esc(v.thankYou()));
+                esc(v.terms()), esc(v.thankYou()));
     }
+
+    public static final String TRANSACTION_REF_PENDING = "Pending — will be updated shortly";
 
     public static String formatPaise(int paise) {
         long rupees = paise / 100;
@@ -245,6 +266,8 @@ public class ReceiptService {
             String verifyUrl,
             String signature,
             String status,
-            String voidReason
+            String voidReason,
+            String transactionRef,
+            boolean transactionRefPending
     ) {}
 }

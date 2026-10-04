@@ -17,18 +17,22 @@ public class QrService {
     @Value("${jb.qr-key-id}")
     private String keyId;
 
-    public static String sign(String bookingId, int amountPaise, long confirmedAtEpoch, String keyId) {
+    /** Signature printed in the QR: HMAC of the booking's identity with the configured QR secret. */
+    public String sign(String bookingId, int amountPaise, long confirmedAtEpoch, String keyId) {
         String payload = bookingId + "|" + amountPaise + "|" + confirmedAtEpoch + "|" + keyId;
-        return hmacBase64Url(payload);
+        return hmacBase64Url(secret, payload);
     }
 
     public String signCurrent(String bookingId, int amountPaise, long confirmedAtEpoch) {
         return sign(bookingId, amountPaise, confirmedAtEpoch, keyId);
     }
 
-    public boolean verify(String bookingId, int amountPaise, long confirmedAtEpoch, String providedSignature) {
+    /** {@code bookingKeyId} is the key id stored on the booking when it was signed. */
+    public boolean verify(String bookingId, int amountPaise, long confirmedAtEpoch, String bookingKeyId,
+                          String providedSignature) {
         if (providedSignature == null || providedSignature.isBlank()) return false;
-        String expected = signCurrent(bookingId, amountPaise, confirmedAtEpoch);
+        String expected = sign(bookingId, amountPaise, confirmedAtEpoch,
+                bookingKeyId == null || bookingKeyId.isBlank() ? keyId : bookingKeyId);
         return constantTimeEquals(expected, providedSignature);
     }
 
@@ -41,13 +45,8 @@ public class QrService {
         return base + verificationPath(bookingId, signature);
     }
 
-    private static String hmacBase64Url(String payload) {
+    private static String hmacBase64Url(String secretVal, String payload) {
         try {
-            // secret resolved from instance in instance methods; static path used by finalize via env fallback
-            String secretVal = System.getenv("QR_HMAC_SECRET");
-            if (secretVal == null || secretVal.isBlank()) {
-                secretVal = "dev-only-change-me-32bytes-min!!";
-            }
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(secretVal.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
             byte[] raw = mac.doFinal(payload.getBytes(StandardCharsets.UTF_8));

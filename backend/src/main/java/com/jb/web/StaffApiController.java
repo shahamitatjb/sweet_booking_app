@@ -68,6 +68,14 @@ public class StaffApiController {
             log.info("[BOOKING] counter booking requested: staffId={} ({}) method={} mobile={}",
                     staff.getId(), staff.getEmail(), method, body.get("mobile"));
 
+            String upiReference = null;
+            if (method == Order.PaymentMethod.upi) {
+                upiReference = RequestParsing.str(body, "upiReference");
+                if (upiReference == null || !upiReference.matches("\\d{12}")) {
+                    throw new FieldValidationException("upiReference", "Enter the 12-digit UPI transaction ID (UTR)");
+                }
+            }
+
             List<OrderService.CartLine> lines = RequestParsing.parseLines(body);
             OrderService.Customer customer = RequestParsing.parseCustomer(body);
 
@@ -85,7 +93,7 @@ public class StaffApiController {
                 booking = finalizeService.finalizeCounterCash(order.getId(), amount, staff.getId());
             } else {
                 booking = finalizeService.finalizeCounterUpi(order.getId(), order.getTotalAmount(), staff.getId(),
-                        body.get("upiReference") == null ? null : String.valueOf(body.get("upiReference")));
+                        upiReference);
             }
             auditService.recordOutsideTx("counter_booking_issued", staff.getEmail(), staff.getId(), staff.getRole().name(),
                     Map.of("bookingId", booking.getBookingId(), "amount", order.getTotalAmount(),

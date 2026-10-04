@@ -8,7 +8,7 @@ test.beforeEach(async () => {
   seed = await resetAndSeed();
 });
 
-test('scanning a receipt QR shows genuine, then warns on a repeat scan', async ({ page }) => {
+test('scanning a receipt QR shows genuine with the full booking details', async ({ page }) => {
   const id = await counterCashBooking(seed, [[seed.ladooId, 3]]);
   const token = await qrToken(id);
 
@@ -16,9 +16,13 @@ test('scanning a receipt QR shows genuine, then warns on a repeat scan', async (
   await expect(page.getByRole('heading', { name: 'Genuine, paid' })).toBeVisible();
   await expect(page.getByText(`Booking ID: ${id}`)).toBeVisible();
   await expect(page.getByText('Total packets: 3')).toBeVisible();
+  await expect(page.getByText('Name: Ravi Kumar')).toBeVisible();
+  await expect(page.getByText('Booked by: Chetan Counter')).toBeVisible();
+  await expect(page.locator('.receipt-table tbody tr')).toHaveCount(1);
 
   await page.reload();
-  await expect(page.getByText('This receipt has been scanned before')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Genuine, paid' })).toBeVisible();
+  await expect(page.getByText(/scanned before/)).toHaveCount(0);
 });
 
 test('forged and cancelled receipts are rejected', async ({ page }) => {

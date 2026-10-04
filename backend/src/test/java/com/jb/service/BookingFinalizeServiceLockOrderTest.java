@@ -24,7 +24,8 @@ class BookingFinalizeServiceLockOrderTest {
     private final BookingRepository bookings = mock(BookingRepository.class);
     private final BookingFinalizeService service = new BookingFinalizeService(
             orders, counters, bookings, mock(PaymentRepository.class), mock(AuditService.class),
-            mock(NotificationOutboxRepository.class), mock(SettingsService.class));
+            mock(NotificationOutboxRepository.class), mock(SettingsService.class),
+            mock(QrService.class));
 
     @Test
     void counterLockIsAcquiredBeforeTheIdempotencyCheckAndExistingBookingIsReturned() {

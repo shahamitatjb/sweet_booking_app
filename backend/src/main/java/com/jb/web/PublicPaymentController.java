@@ -22,6 +22,7 @@ import java.util.UUID;
 public class PublicPaymentController {
     /** Clients get one fixed message; the real reason stays in the server log. */
     public static final String GENERIC_FAILURE = "Payment could not be confirmed";
+    public static final String PENDING_MESSAGE = "Payment received. We are confirming it with the bank.";
 
     private final PaymentService paymentService;
     private final ReceiptService receiptService;
@@ -40,11 +41,18 @@ public class PublicPaymentController {
             return ResponseEntity.badRequest().body(Map.of("error", "Invalid payment confirmation"));
         }
         try {
-            Booking booking = paymentService.verifyAndFinalize(
+            PaymentService.Confirmed confirmed = paymentService.verifyAndFinalize(
                     orderId, req.razorpayOrderId(), req.razorpayPaymentId(), req.razorpaySignature());
+            if (confirmed.confirmationPending()) {
+                // Razorpay could not be asked yet. No booking: the browser retries this call, and the
+                // webhook or the reconciliation job confirms it once Razorpay reports the payment captured.
+                return ResponseEntity.accepted().body(Map.of("status", "pending", "message", PENDING_MESSAGE));
+            }
+            Booking booking = confirmed.booking();
             return ResponseEntity.ok(Map.of(
                     "bookingId", booking.getBookingId(),
-                    "receiptUrl", receiptService.receiptPath(booking)));
+                    "receiptUrl", receiptService.receiptPath(booking),
+                    "transactionRefPending", confirmed.bankReferencePending()));
         } catch (IllegalArgumentException | IllegalStateException e) {
             log.warn("[PAY] verify failed for orderId={}: {}", orderId, e.getMessage());
             return ResponseEntity.badRequest().body(Map.of("error", GENERIC_FAILURE));
