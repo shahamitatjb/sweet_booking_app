@@ -27,6 +27,7 @@ public class BookingFinalizeService {
     private final AuditService auditService;
     private final NotificationOutboxRepository outboxRepository;
     private final SettingsService settingsService;
+    private final QrService qrService;
 
     @Transactional
     public Booking finalizeOnline(UUID orderId, String gatewayPaymentId, int amountPaise) {
@@ -110,7 +111,7 @@ public class BookingFinalizeService {
 
         String bookingId = formatBookingId(next);
         Instant now = Instant.now();
-        String signature = QrService.sign(bookingId, order.getTotalAmount(), now.getEpochSecond(),
+        String signature = qrService.sign(bookingId, order.getTotalAmount(), now.getEpochSecond(),
                 settingsService.getOrDefault("qr_key_id", "en", "k1"));
         log.info("[BOOKING] sequence allocated: counter {} -> {} (bookingId={})", prev, next, bookingId);
 

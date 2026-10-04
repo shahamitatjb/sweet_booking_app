@@ -31,4 +31,37 @@ public final class RazorpayWebhookPayload {
             return Optional.empty();
         }
     }
+
+    /**
+     * Any signed webhook: its event name, the payment it concerns (may carry only an id when the
+     * body has no payment entity) and, for refunds and disputes, that entity's id.
+     */
+    public record Event(String type, RazorpayService.GatewayPayment payment, String subjectId) {}
+
+    /** Empty for bodies that cannot be read or that name no payment. */
+    public static Optional<Event> parse(String body) {
+        try {
+            JSONObject root = new JSONObject(body);
+            String type = root.optString("event", "");
+            JSONObject payload = root.optJSONObject("payload");
+            if (payload == null) return Optional.empty();
+            JSONObject payment = entity(payload, "payment");
+            JSONObject subject = entity(payload, "refund");
+            if (subject == null) subject = entity(payload, "dispute");
+            if (payment == null && subject != null && !subject.optString("payment_id", "").isBlank()) {
+                payment = new JSONObject().put("id", subject.getString("payment_id"));
+            }
+            if (payment == null || payment.optString("id", "").isBlank()) return Optional.empty();
+            return Optional.of(new Event(type, RazorpayService.GatewayPayment.from(payment),
+                    subject == null ? null : subject.optString("id", null)));
+        } catch (RuntimeException e) {
+            log.warn("[PAY] webhook body not understood: {}", e.toString());
+            return Optional.empty();
+        }
+    }
+
+    private static JSONObject entity(JSONObject payload, String name) {
+        JSONObject wrapper = payload.optJSONObject(name);
+        return wrapper == null ? null : wrapper.optJSONObject("entity");
+    }
 }

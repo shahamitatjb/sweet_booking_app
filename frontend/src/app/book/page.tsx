@@ -41,11 +41,15 @@ type OtpState = { code: string; sent: boolean; destination: string; devCode: str
 type HeldOrder = { orderId: string; amountPaise: number; gateway?: { keyId?: string; gatewayOrderId?: string } };
 /** Razorpay reported success but our verify call has not succeeded yet: money is taken, never re-open checkout. */
 type PendingConfirm = { orderId: string; result: CheckoutSuccess };
+type VerifyResponse = { status?: string; bookingId?: string; receiptUrl?: string; transactionRefPending?: boolean };
 
 const EMPTY_FORM: CustomerForm = { name: '', mobile: '', email: '', address: '', pinCode: '' };
 const NO_OTP: OtpState = { code: '', sent: false, destination: '', devCode: '' };
 const DEFAULT_MAX_PER_ITEM = 20;
 const DEFAULT_MAX_TOTAL = 50;
+// Keep asking for ~10 minutes: the reconciliation job confirms a stuck payment within a few.
+const CONFIRM_RETRY_MS = 8000;
+const CONFIRM_MAX_ATTEMPTS = 75;
 const STEPS = 3;
 
 export default function BookPage() {
@@ -169,15 +173,24 @@ export default function BookPage() {
     setError('');
     setInfo(t(lang, 'paymentVerifying'));
     try {
-      const done = await api<{ bookingId: string; receiptUrl: string; transactionRefPending?: boolean }>(
-        '/api/public/payments/verify',
-        {
+      // The server confirms only once Razorpay reports the payment captured. While it cannot
+      // tell yet (202 pending), keep asking; the webhook or the reconciliation job may confirm it.
+      for (let attempt = 0; attempt < CONFIRM_MAX_ATTEMPTS; attempt++) {
+        const done = await api<VerifyResponse>('/api/public/payments/verify', {
           method: 'POST',
           body: JSON.stringify({ orderId: pending.orderId, ...pending.result }),
-        },
-      );
-      const receiptUrl = done.receiptUrl || `/receipt/${done.bookingId}`;
-      router.push(done.transactionRefPending ? `${receiptUrl}${receiptUrl.includes('?') ? '&' : '?'}paid=1` : receiptUrl);
+        });
+        if (done.status !== 'pending' && done.bookingId) {
+          const receiptUrl = done.receiptUrl || `/receipt/${done.bookingId}`;
+          router.push(
+            done.transactionRefPending ? `${receiptUrl}${receiptUrl.includes('?') ? '&' : '?'}paid=1` : receiptUrl,
+          );
+          return;
+        }
+        setInfo(t(lang, 'paymentPending'));
+        await new Promise((resolve) => setTimeout(resolve, CONFIRM_RETRY_MS));
+      }
+      setInfo(t(lang, 'paymentPendingGiveUp').replace('{ref}', pending.orderId.slice(0, 8).toUpperCase()));
     } catch (e) {
       setInfo('');
       showApiError(e);

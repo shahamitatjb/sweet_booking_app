@@ -10,6 +10,7 @@ import com.jb.repository.ItemRepository;
 import com.jb.repository.StaffRepository;
 import com.jb.security.JwtService;
 import com.jb.service.OutboxWorker;
+import com.jb.service.GatewayUnavailableException;
 import com.jb.service.RazorpayService;
 import com.jb.service.SettingsService;
 import jakarta.servlet.http.Cookie;
@@ -41,6 +42,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -63,6 +65,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
         "jb.email-provider=console",
         "jb.bootstrap-admin-emails=",
         "jb.booking-enabled-override=",
+        "jb.order-limit-per-mobile-per-hour=1000",
+        "jb.order-limit-per-ip-per-hour=1000",
 })
 public abstract class IntegrationTestBase {
     static final String RZP_KEY_ID = "rzp_test_it";
@@ -91,6 +95,8 @@ public abstract class IntegrationTestBase {
     @MockBean StuckPaymentJob stuckPaymentJob;
 
     private final AtomicInteger gatewaySeq = new AtomicInteger();
+    /** The fake Razorpay's payments, by payment id. */
+    protected final Map<String, RazorpayService.GatewayPayment> gatewayPayments = new java.util.concurrent.ConcurrentHashMap<>();
 
     protected Item ladoo;
     protected Item barfi;
@@ -127,8 +133,23 @@ public abstract class IntegrationTestBase {
             gw.put("mode", "test");
             return gw;
         }).when(razorpayService).createOrder(any());
-        // No network to Razorpay: the bank reference is "not available yet" unless a test says otherwise.
-        doReturn(java.util.Optional.empty()).when(razorpayService).fetchBankReference(any());
+        // Razorpay's payment API, faked from the payments the test registered.
+        gatewayPayments.clear();
+        doAnswer(inv -> {
+            RazorpayService.GatewayPayment p = gatewayPayments.get((String) inv.getArgument(0));
+            if (p == null) throw new GatewayUnavailableException("unknown payment in test", null);
+            return p;
+        }).when(razorpayService).fetchPayment(any());
+        doAnswer(inv -> {
+            RazorpayService.GatewayPayment p = gatewayPayments.get((String) inv.getArgument(0));
+            RazorpayService.GatewayPayment captured = new RazorpayService.GatewayPayment(p.id(), p.gatewayOrderId(),
+                    "captured", p.amountPaise(), p.currency(), p.bankReference());
+            gatewayPayments.put(p.id(), captured);
+            return captured;
+        }).when(razorpayService).capture(any(), anyInt());
+        doAnswer(inv -> gatewayPayments.values().stream()
+                .filter(p -> p.gatewayOrderId().equals(inv.getArgument(0))).toList())
+                .when(razorpayService).paymentsForOrder(any());
     }
 
     // ── Fixtures ────────────────────────────────────────────────────────
@@ -202,8 +223,20 @@ public abstract class IntegrationTestBase {
         return body(postJson("/api/public/orders", orderBody(itemIdQtyPairs)));
     }
 
-    /** What Razorpay Checkout hands the browser after a successful payment. */
+    /** Registers a payment on the fake Razorpay for this order (full amount, INR). */
+    protected RazorpayService.GatewayPayment gatewayPayment(JsonNode order, String paymentId, String status) {
+        RazorpayService.GatewayPayment p = new RazorpayService.GatewayPayment(paymentId,
+                order.at("/gateway/gatewayOrderId").asText(), status, order.get("amountPaise").asInt(), "INR", null);
+        gatewayPayments.put(paymentId, p);
+        return p;
+    }
+
+    /**
+     * What Razorpay Checkout hands the browser after a successful payment. Also registers the
+     * payment as captured on the fake Razorpay unless the test registered it already.
+     */
     protected Map<String, Object> checkoutSuccess(JsonNode order, String paymentId) {
+        if (!gatewayPayments.containsKey(paymentId)) gatewayPayment(order, paymentId, "captured");
         String gatewayOrderId = order.at("/gateway/gatewayOrderId").asText();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("orderId", order.get("orderId").asText());
@@ -216,7 +249,7 @@ public abstract class IntegrationTestBase {
     protected String capturedWebhook(String gatewayOrderId, String paymentId, int amountPaise) {
         return "{\"event\":\"payment.captured\",\"payload\":{\"payment\":{\"entity\":{"
                 + "\"id\":\"" + paymentId + "\",\"order_id\":\"" + gatewayOrderId + "\","
-                + "\"amount\":" + amountPaise + ",\"status\":\"captured\"}}}}";
+                + "\"amount\":" + amountPaise + ",\"currency\":\"INR\",\"status\":\"captured\"}}}}";
     }
 
     protected ResultActions postWebhook(String rawBody, String signature) throws Exception {

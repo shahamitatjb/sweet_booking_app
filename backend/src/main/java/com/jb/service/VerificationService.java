@@ -46,6 +46,7 @@ public class VerificationService {
                 booking.getBookingId(),
                 order.getTotalAmount(),
                 booking.getConfirmedAt().getEpochSecond(),
+                booking.getQrKeyId(),
                 signature);
         boolean paid = order.getStatus() == Order.Status.paid;
         if (!sigOk || !paid) {

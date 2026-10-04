@@ -2,7 +2,10 @@ package com.jb.service;
 
 import com.jb.domain.Booking;
 import com.jb.domain.Order;
+import com.jb.repository.BookingRepository;
 import com.jb.repository.OrderRepository;
+import com.jb.repository.PaymentRepository;
+import com.jb.service.RazorpayService.GatewayPayment;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -26,13 +29,16 @@ class PaymentServiceTest {
     private final OrderRepository orders = mock(OrderRepository.class);
     private final BookingFinalizeService finalize = mock(BookingFinalizeService.class);
     private final RazorpayService razorpay = spy(new RazorpayService());
-    private final PaymentService service = new PaymentService(orders, finalize, razorpay);
+    private final BookingRepository bookings = mock(BookingRepository.class);
+    private final PaymentRepository paymentRows = mock(PaymentRepository.class);
+    private final BookingAdminService admin = mock(BookingAdminService.class);
+    private final PaymentService service = new PaymentService(orders, finalize, razorpay, bookings, paymentRows, admin);
 
     PaymentServiceTest() {
         ReflectionTestUtils.setField(razorpay, "keyId", "rzp_test_key");
         ReflectionTestUtils.setField(razorpay, "keySecret", KEY_SECRET);
         ReflectionTestUtils.setField(razorpay, "webhookSecret", WEBHOOK_SECRET);
-        doReturn(Optional.empty()).when(razorpay).fetchBankReference(any());
+        when(bookings.findByOrderId(any())).thenReturn(Optional.empty());
     }
 
     private static Order awaitingOrder() {
@@ -44,6 +50,14 @@ class PaymentServiceTest {
         return Booking.builder().bookingId("JB-0007").build();
     }
 
+    private static GatewayPayment payment(String status) {
+        return new GatewayPayment("pay_123", "order_abc", status, 45000, "INR", "412345678901");
+    }
+
+    private PaymentService.Confirmed callback() throws Exception {
+        return service.verifyAndFinalize(ORDER_ID, "order_abc", "pay_123", hmacHex(KEY_SECRET, "order_abc|pay_123"));
+    }
+
     static String hmacHex(String secret, String payload) throws Exception {
         Mac mac = Mac.getInstance("HmacSHA256");
         mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
@@ -53,49 +67,86 @@ class PaymentServiceTest {
     // ---- browser callback -------------------------------------------------
 
     @Test
-    void validSignatureFinalizesWithTheOrdersOwnAmount() throws Exception {
+    void capturedPaymentIsConfirmedWithItsBankReference() throws Exception {
         when(orders.findById(ORDER_ID)).thenReturn(Optional.of(awaitingOrder()));
+        doReturn(payment("captured")).when(razorpay).fetchPayment("pay_123");
         when(finalize.finalizeOnline(ORDER_ID, "pay_123", 45000)).thenReturn(booking());
-        String sig = hmacHex(KEY_SECRET, "order_abc|pay_123");
-
-        var confirmed = service.verifyAndFinalize(ORDER_ID, "order_abc", "pay_123", sig);
-
-        assertThat(confirmed.booking().getBookingId()).isEqualTo("JB-0007");
-        verify(finalize).finalizeOnline(ORDER_ID, "pay_123", 45000);
-    }
-
-    @Test
-    void fetchedBankReferenceIsStoredAndNotPending() throws Exception {
-        when(orders.findById(ORDER_ID)).thenReturn(Optional.of(awaitingOrder()));
-        when(finalize.finalizeOnline(ORDER_ID, "pay_123", 45000)).thenReturn(booking());
-        doReturn(Optional.of("412345678901")).when(razorpay).fetchBankReference("pay_123");
         when(finalize.recordBankReference(ORDER_ID, "412345678901")).thenReturn(true);
 
-        var confirmed = service.verifyAndFinalize(ORDER_ID, "order_abc", "pay_123", hmacHex(KEY_SECRET, "order_abc|pay_123"));
-
-        assertThat(confirmed.bankReferencePending()).isFalse();
-        verify(finalize).recordBankReference(ORDER_ID, "412345678901");
-    }
-
-    @Test
-    void failedBankReferenceFetchStillIssuesTheBookingAndMarksItPending() throws Exception {
-        when(orders.findById(ORDER_ID)).thenReturn(Optional.of(awaitingOrder()));
-        when(finalize.finalizeOnline(ORDER_ID, "pay_123", 45000)).thenReturn(booking());
-        when(finalize.recordBankReference(ORDER_ID, null)).thenReturn(false);
-
-        var confirmed = service.verifyAndFinalize(ORDER_ID, "order_abc", "pay_123", hmacHex(KEY_SECRET, "order_abc|pay_123"));
+        var confirmed = callback();
 
         assertThat(confirmed.booking().getBookingId()).isEqualTo("JB-0007");
-        assertThat(confirmed.bankReferencePending()).isTrue();
+        assertThat(confirmed.bankReferencePending()).isFalse();
+        verify(razorpay, never()).capture(any(), anyInt());
     }
 
     @Test
-    void wrongSignatureIsRejectedAndNothingIsFinalized() {
+    void authorizedPaymentIsCapturedFirst() throws Exception {
+        when(orders.findById(ORDER_ID)).thenReturn(Optional.of(awaitingOrder()));
+        doReturn(payment("authorized")).when(razorpay).fetchPayment("pay_123");
+        doReturn(payment("captured")).when(razorpay).capture("pay_123", 45000);
+        when(finalize.finalizeOnline(ORDER_ID, "pay_123", 45000)).thenReturn(booking());
+
+        assertThat(callback().booking().getBookingId()).isEqualTo("JB-0007");
+        verify(razorpay).capture("pay_123", 45000);
+    }
+
+    @Test
+    void paymentThatIsNotCapturedIsNeverConfirmed() throws Exception {
+        for (String status : new String[] {"failed", "created", "refunded"}) {
+            when(orders.findById(ORDER_ID)).thenReturn(Optional.of(awaitingOrder()));
+            doReturn(payment(status)).when(razorpay).fetchPayment("pay_123");
+
+            assertThatThrownBy(this::callback).isInstanceOf(IllegalStateException.class);
+        }
+        verify(finalize, never()).finalizeOnline(any(), any(), anyInt());
+    }
+
+    @Test
+    void paymentForAnotherOrderAmountOrCurrencyIsRejected() throws Exception {
+        GatewayPayment[] wrong = {
+                new GatewayPayment("pay_123", "order_other", "captured", 45000, "INR", null),
+                new GatewayPayment("pay_123", "order_abc", "captured", 100, "INR", null),
+                new GatewayPayment("pay_123", "order_abc", "captured", 45000, "USD", null),
+        };
+        for (GatewayPayment p : wrong) {
+            when(orders.findById(ORDER_ID)).thenReturn(Optional.of(awaitingOrder()));
+            doReturn(p).when(razorpay).fetchPayment("pay_123");
+            assertThatThrownBy(this::callback).isInstanceOf(IllegalStateException.class);
+        }
+        verify(finalize, never()).finalizeOnline(any(), any(), anyInt());
+    }
+
+    @Test
+    void razorpayUnreachableMeansPendingAndNoBooking() throws Exception {
+        when(orders.findById(ORDER_ID)).thenReturn(Optional.of(awaitingOrder()));
+        doThrow(new GatewayUnavailableException("down", null)).when(razorpay).fetchPayment("pay_123");
+
+        var confirmed = callback();
+
+        assertThat(confirmed.confirmationPending()).isTrue();
+        verify(finalize, never()).finalizeOnline(any(), any(), anyInt());
+    }
+
+    @Test
+    void alreadyConfirmedOrderReturnsItsBookingWithoutAskingRazorpay() throws Exception {
+        Order paid = awaitingOrder();
+        paid.setStatus(Order.Status.paid);
+        when(orders.findById(ORDER_ID)).thenReturn(Optional.of(paid));
+        when(bookings.findByOrderId(ORDER_ID)).thenReturn(Optional.of(booking()));
+
+        assertThat(callback().booking().getBookingId()).isEqualTo("JB-0007");
+        verify(razorpay, never()).fetchPayment(any());
+    }
+
+    @Test
+    void wrongSignatureIsRejectedAndRazorpayIsNotEvenAsked() {
         when(orders.findById(ORDER_ID)).thenReturn(Optional.of(awaitingOrder()));
 
         assertThatThrownBy(() -> service.verifyAndFinalize(ORDER_ID, "order_abc", "pay_123", "deadbeef"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("signature");
+        verify(razorpay, never()).fetchPayment(any());
         verify(finalize, never()).finalizeOnline(any(), any(), anyInt());
     }
 
@@ -123,30 +174,70 @@ class PaymentServiceTest {
 
     private static final String CAPTURED = """
             {"event":"payment.captured","payload":{"payment":{"entity":{
-              "id":"pay_123","order_id":"order_abc","amount":45000,"currency":"INR","status":"captured"}}}}
+              "id":"pay_123","order_id":"order_abc","amount":45000,"currency":"INR","status":"captured",
+              "acquirer_data":{"rrn":"412345678901"}}}}}
             """;
 
-    @Test
-    void capturedWebhookWithValidSignatureFinalizesBooking() throws Exception {
-        when(orders.findByGatewayOrderId("order_abc")).thenReturn(Optional.of(awaitingOrder()));
-        when(finalize.finalizeOnline(ORDER_ID, "pay_123", 45000)).thenReturn(booking());
-
-        var result = service.handleWebhook(CAPTURED, hmacHex(WEBHOOK_SECRET, CAPTURED));
-
-        assertThat(result.outcome()).isEqualTo(PaymentService.WebhookOutcome.FINALIZED);
-        assertThat(result.bookingId()).isEqualTo("JB-0007");
+    private PaymentService.WebhookResult hook(String body) throws Exception {
+        return service.handleWebhook(body, hmacHex(WEBHOOK_SECRET, body));
     }
 
     @Test
-    void capturedWebhookStoresTheBankReferenceFromAcquirerData() throws Exception {
+    void capturedWebhookFinalizesWithoutCallingRazorpay() throws Exception {
         when(orders.findByGatewayOrderId("order_abc")).thenReturn(Optional.of(awaitingOrder()));
         when(finalize.finalizeOnline(ORDER_ID, "pay_123", 45000)).thenReturn(booking());
-        String withRrn = CAPTURED.replace("\"status\":\"captured\"",
-                "\"status\":\"captured\",\"acquirer_data\":{\"rrn\":\"412345678901\"}");
 
-        service.handleWebhook(withRrn, hmacHex(WEBHOOK_SECRET, withRrn));
+        var result = hook(CAPTURED);
 
+        assertThat(result.outcome()).isEqualTo(PaymentService.WebhookOutcome.FINALIZED);
+        assertThat(result.bookingId()).isEqualTo("JB-0007");
         verify(finalize).recordBankReference(ORDER_ID, "412345678901");
+        verify(razorpay, never()).capture(any(), anyInt());
+    }
+
+    @Test
+    void authorizedWebhookCapturesThenFinalizes() throws Exception {
+        when(orders.findByGatewayOrderId("order_abc")).thenReturn(Optional.of(awaitingOrder()));
+        doReturn(payment("captured")).when(razorpay).capture("pay_123", 45000);
+        when(finalize.finalizeOnline(ORDER_ID, "pay_123", 45000)).thenReturn(booking());
+
+        var result = hook(CAPTURED.replace("payment.captured", "payment.authorized")
+                .replace("\"status\":\"captured\"", "\"status\":\"authorized\""));
+
+        assertThat(result.outcome()).isEqualTo(PaymentService.WebhookOutcome.FINALIZED);
+        verify(razorpay).capture("pay_123", 45000);
+    }
+
+    @Test
+    void refundAndDisputeWebhooksCancelTheOrder() throws Exception {
+        when(orders.findByGatewayOrderId("order_abc")).thenReturn(Optional.of(awaitingOrder()));
+        when(admin.cancelForPaymentEvent(eq(ORDER_ID), any())).thenReturn("JB-0007");
+        String refund = """
+                {"event":"refund.created","payload":{"refund":{"entity":{"id":"rfnd_9","payment_id":"pay_123","amount":100}},
+                 "payment":{"entity":{"id":"pay_123","order_id":"order_abc","amount":45000,"currency":"INR","status":"captured"}}}}
+                """;
+
+        var result = hook(refund);
+
+        assertThat(result.outcome()).isEqualTo(PaymentService.WebhookOutcome.CANCELLED);
+        verify(admin).cancelForPaymentEvent(ORDER_ID, "Refunded (Razorpay refund rfnd_9)");
+
+        Order viaPayment = awaitingOrder();
+        when(paymentRows.findByGatewayPaymentId("pay_777"))
+                .thenReturn(Optional.of(com.jb.domain.Payment.builder().order(viaPayment).build()));
+        hook("""
+                {"event":"payment.dispute.created","payload":{"dispute":{"entity":{"id":"disp_1","payment_id":"pay_777"}}}}
+                """);
+        verify(admin).cancelForPaymentEvent(ORDER_ID, "Payment disputed (Razorpay dispute disp_1)");
+    }
+
+    @Test
+    void failedRefundCancelsNothing() throws Exception {
+        String failed = """
+                {"event":"refund.failed","payload":{"refund":{"entity":{"id":"rfnd_9","payment_id":"pay_123"}}}}
+                """;
+        assertThat(hook(failed).outcome()).isEqualTo(PaymentService.WebhookOutcome.IGNORED);
+        verify(admin, never()).cancelForPaymentEvent(any(), any());
     }
 
     @Test
@@ -158,10 +249,8 @@ class PaymentServiceTest {
     }
 
     @Test
-    void nonCapturedEventIsAcknowledgedButIgnored() throws Exception {
-        String failed = CAPTURED.replace("payment.captured", "payment.failed");
-
-        var result = service.handleWebhook(failed, hmacHex(WEBHOOK_SECRET, failed));
+    void nonPaymentEventIsAcknowledgedButIgnored() throws Exception {
+        var result = hook(CAPTURED.replace("payment.captured", "payment.failed"));
 
         assertThat(result.outcome()).isEqualTo(PaymentService.WebhookOutcome.IGNORED);
         verify(finalize, never()).finalizeOnline(any(), any(), anyInt());
@@ -171,23 +260,17 @@ class PaymentServiceTest {
     void capturedEventForUnknownOrderIsIgnored() throws Exception {
         when(orders.findByGatewayOrderId("order_abc")).thenReturn(Optional.empty());
 
-        var result = service.handleWebhook(CAPTURED, hmacHex(WEBHOOK_SECRET, CAPTURED));
-
-        assertThat(result.outcome()).isEqualTo(PaymentService.WebhookOutcome.IGNORED);
+        assertThat(hook(CAPTURED).outcome()).isEqualTo(PaymentService.WebhookOutcome.IGNORED);
         verify(finalize, never()).finalizeOnline(any(), any(), anyInt());
     }
 
     @Test
-    void amountMismatchIsNotFinalizedButIsAcknowledgedSoRazorpayStopsRetrying() throws Exception {
+    void wrongAmountOrCurrencyIsNotFinalizedButIsAcknowledged() throws Exception {
         when(orders.findByGatewayOrderId("order_abc")).thenReturn(Optional.of(awaitingOrder()));
-        String shortPaid = CAPTURED.replace("45000", "100");
-        when(finalize.finalizeOnline(ORDER_ID, "pay_123", 100))
-                .thenThrow(new IllegalStateException("Amount mismatch for order " + ORDER_ID));
 
-        var result = service.handleWebhook(shortPaid, hmacHex(WEBHOOK_SECRET, shortPaid));
-
-        assertThat(result.outcome()).isEqualTo(PaymentService.WebhookOutcome.IGNORED);
-        assertThat(result.bookingId()).isNull();
+        assertThat(hook(CAPTURED.replace("45000", "100")).outcome()).isEqualTo(PaymentService.WebhookOutcome.IGNORED);
+        assertThat(hook(CAPTURED.replace("\"INR\"", "\"USD\"")).outcome()).isEqualTo(PaymentService.WebhookOutcome.IGNORED);
+        verify(finalize, never()).finalizeOnline(any(), any(), anyInt());
     }
 
     @Test

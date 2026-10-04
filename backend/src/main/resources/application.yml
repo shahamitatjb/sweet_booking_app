@@ -2,7 +2,9 @@ spring:
   application:
     name: jb-api
   profiles:
-    active: ${SPRING_PROFILES_ACTIVE:local}
+    # Fail closed: without an explicit profile the app runs as production (no demo routes,
+    # real secrets required). Local development sets SPRING_PROFILES_ACTIVE=local.
+    active: ${SPRING_PROFILES_ACTIVE:prod}
   # Load the repo-root .env (and backend/.env if present) as config data.
   # OS environment variables still win over these values.
   config:
@@ -64,6 +66,9 @@ jb:
   razorpay-key-id: ${RAZORPAY_KEY_ID:}
   razorpay-key-secret: ${RAZORPAY_KEY_SECRET:}
   razorpay-webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
+  # Online orders one mobile / one client IP may start per hour (spam protection).
+  order-limit-per-mobile-per-hour: ${ORDER_LIMIT_PER_MOBILE_PER_HOUR:5}
+  order-limit-per-ip-per-hour: ${ORDER_LIMIT_PER_IP_PER_HOUR:30}
   booking-enabled-override: ${BOOKING_ENABLED_OVERRIDE:}   # empty = use DB setting
   bootstrap-admin-emails: ${BOOTSTRAP_ADMIN_EMAILS:}      # comma-separated; used only when the staff table is empty
 

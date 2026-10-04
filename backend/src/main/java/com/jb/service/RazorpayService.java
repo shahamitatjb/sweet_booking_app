@@ -7,6 +7,8 @@ import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -84,26 +86,76 @@ public class RazorpayService {
         }
     }
 
-    /**
-     * Bank-side reference of a payment, for reconciling with the bank statement. Fetched from Razorpay
-     * because the checkout callback only carries the payment id. Empty when the call fails or Razorpay
-     * has no reference yet; the payment.captured webhook fills it in later.
-     */
-    public Optional<String> fetchBankReference(String paymentId) {
-        if (!enabled()) {
-            return Optional.empty();
+    /** The fields of a Razorpay payment that decide whether a booking may be confirmed. */
+    public record GatewayPayment(String id, String gatewayOrderId, String status, int amountPaise,
+                                 String currency, String bankReference) {
+        public static final String CAPTURED = "captured";
+        public static final String AUTHORIZED = "authorized";
+
+        public static GatewayPayment from(JSONObject entity) {
+            return new GatewayPayment(
+                    entity.optString("id", ""),
+                    entity.isNull("order_id") ? "" : entity.optString("order_id", ""),
+                    entity.optString("status", ""),
+                    entity.optInt("amount", -1),
+                    entity.optString("currency", ""),
+                    RazorpayService.bankReference(entity).orElse(null));
         }
+
+        public boolean captured() { return CAPTURED.equals(status); }
+        public boolean authorized() { return AUTHORIZED.equals(status); }
+    }
+
+    /** Current state of one payment, straight from Razorpay. */
+    public GatewayPayment fetchPayment(String paymentId) {
         try {
-            com.razorpay.RazorpayClient client = new com.razorpay.RazorpayClient(keyId, keySecret);
-            com.razorpay.Payment payment = client.payments.fetch(paymentId);
-            Optional<String> ref = bankReference(payment.toJson());
-            log.info("[PAY] bank reference fetched for paymentId={}: {}", paymentId, ref.orElse("(none yet)"));
-            return ref;
+            com.razorpay.Payment payment = client().payments.fetch(paymentId);
+            GatewayPayment p = GatewayPayment.from(payment.toJson());
+            log.info("[PAY] fetched paymentId={} status={} amountPaise={} gatewayOrderId={}",
+                    p.id(), p.status(), p.amountPaise(), p.gatewayOrderId());
+            return p;
         } catch (Exception e) {
-            log.warn("[PAY] bank reference fetch FAILED for paymentId={} — webhook will fill it in: {}",
-                    paymentId, e.toString());
-            return Optional.empty();
+            log.warn("[PAY] payment fetch FAILED for paymentId={}: {}", paymentId, e.toString());
+            throw new GatewayUnavailableException("Razorpay payment fetch failed", e);
         }
+    }
+
+    /** Collects an authorized payment. Razorpay answers with the payment, now captured. */
+    public GatewayPayment capture(String paymentId, int amountPaise) {
+        try {
+            JSONObject request = new JSONObject();
+            request.put("amount", amountPaise);
+            request.put("currency", "INR");
+            com.razorpay.Payment payment = client().payments.capture(paymentId, request);
+            GatewayPayment p = GatewayPayment.from(payment.toJson());
+            log.info("[PAY] capture requested for paymentId={} amountPaise={} -> status={}",
+                    paymentId, amountPaise, p.status());
+            return p;
+        } catch (Exception e) {
+            log.warn("[PAY] capture FAILED for paymentId={}: {}", paymentId, e.toString());
+            throw new GatewayUnavailableException("Razorpay capture failed", e);
+        }
+    }
+
+    /** Every payment attempt Razorpay holds for one of our gateway orders. */
+    public List<GatewayPayment> paymentsForOrder(String gatewayOrderId) {
+        try {
+            List<GatewayPayment> out = new ArrayList<>();
+            for (com.razorpay.Payment p : client().orders.fetchPayments(gatewayOrderId)) {
+                out.add(GatewayPayment.from(p.toJson()));
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("[PAY] payments fetch FAILED for gatewayOrderId={}: {}", gatewayOrderId, e.toString());
+            throw new GatewayUnavailableException("Razorpay order payments fetch failed", e);
+        }
+    }
+
+    private com.razorpay.RazorpayClient client() throws com.razorpay.RazorpayException {
+        if (!enabled()) {
+            throw new IllegalStateException("Razorpay keys not configured");
+        }
+        return new com.razorpay.RazorpayClient(keyId, keySecret);
     }
 
     /**

@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.UUID;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -69,6 +70,37 @@ public class BookingAdminService {
         log.warn("[BOOKING] voided by staffId={} ({}): {} previousStatus={} amountPaise={} reason=\"{}\"",
                 actor.getId(), actor.getEmail(), booking.getBookingId(), before, order.getTotalAmount(), text);
         return booking;
+    }
+
+    /**
+     * Cancels an online order because Razorpay reports its money going back to the customer
+     * (refund) or contested (dispute). Works before or after the booking was issued: a voided
+     * order can never be confirmed later. Returns the booking id, or null if none was issued.
+     */
+    @Transactional
+    public String cancelForPaymentEvent(UUID orderId, String reason) {
+        // Same lock as BookingFinalizeService: a refund racing a confirmation is applied after it, never lost.
+        counterRepository.findForUpdate(BookingFinalizeService.COUNTER_BOOKING)
+                .orElseThrow(() -> new IllegalStateException("Counter row missing"));
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("Order not found: " + orderId));
+        String bookingId = bookingRepository.findByOrderId(orderId).map(Booking::getBookingId).orElse(null);
+        if (order.getStatus() == Order.Status.voided) {
+            log.info("[BOOKING] gateway cancel skipped: order {} ({}) already voided", orderId, bookingId);
+            return bookingId;
+        }
+        Order.Status before = order.getStatus();
+        order.setStatus(Order.Status.voided);
+        order.setVoidReason(reason);
+        order.setUpdatedAt(Instant.now());
+        orderRepository.save(order);
+        auditService.record("booking_cancelled_by_gateway", "razorpay", null, "SYSTEM",
+                java.util.Map.of("orderId", orderId.toString(), "bookingId", bookingId == null ? "" : bookingId,
+                        "reason", reason, "previousStatus", before.name(), "amountPaise", order.getTotalAmount()),
+                null, null);
+        log.warn("[BOOKING] CANCELLED by Razorpay event: orderId={} bookingId={} previousStatus={} amountPaise={} reason=\"{}\"",
+                orderId, bookingId, before, order.getTotalAmount(), reason);
+        return bookingId;
     }
 
     /**

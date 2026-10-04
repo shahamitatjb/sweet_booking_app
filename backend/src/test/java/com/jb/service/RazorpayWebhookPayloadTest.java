@@ -51,4 +51,28 @@ class RazorpayWebhookPayloadTest {
         assertThat(RazorpayService.bankReference(new JSONObject("{\"acquirer_data\":{}}"))).isEmpty();
         assertThat(RazorpayService.bankReference(new JSONObject("{}"))).isEmpty();
     }
+
+    @Test
+    void parsesRefundAndDisputeEventsDownToTheirPayment() {
+        var refund = RazorpayWebhookPayload.parse("""
+                {"event":"refund.created","payload":{"refund":{"entity":{"id":"rfnd_1","payment_id":"pay_1"}},
+                 "payment":{"entity":{"id":"pay_1","order_id":"order_1","amount":100,"currency":"INR","status":"refunded"}}}}
+                """).orElseThrow();
+        assertThat(refund.type()).isEqualTo("refund.created");
+        assertThat(refund.subjectId()).isEqualTo("rfnd_1");
+        assertThat(refund.payment().gatewayOrderId()).isEqualTo("order_1");
+
+        var dispute = RazorpayWebhookPayload.parse("""
+                {"event":"payment.dispute.created","payload":{"dispute":{"entity":{"id":"disp_1","payment_id":"pay_2"}}}}
+                """).orElseThrow();
+        assertThat(dispute.payment().id()).isEqualTo("pay_2");
+        assertThat(dispute.payment().gatewayOrderId()).isEmpty();
+        assertThat(dispute.subjectId()).isEqualTo("disp_1");
+    }
+
+    @Test
+    void bodiesWithoutAPaymentAreNotUnderstood() {
+        assertThat(RazorpayWebhookPayload.parse("{\"event\":\"order.paid\",\"payload\":{}}")).isEmpty();
+        assertThat(RazorpayWebhookPayload.parse("not json")).isEmpty();
+    }
 }

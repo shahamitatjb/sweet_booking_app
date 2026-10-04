@@ -80,6 +80,7 @@ class BookingSequenceConcurrencyIT extends IntegrationTestBase {
         UUID orderId = UUID.fromString(order.get("orderId").asText());
         String gatewayOrderId = order.at("/gateway/gatewayOrderId").asText();
         String signature = hmacHex(RZP_KEY_SECRET, gatewayOrderId + "|pay_ONE");
+        gatewayPayment(order, "pay_ONE", "captured");
         String hook = capturedWebhook(gatewayOrderId, "pay_ONE", 30000);
         String hookSig = hmacHex(RZP_WEBHOOK_SECRET, hook);
 
