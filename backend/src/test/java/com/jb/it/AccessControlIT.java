@@ -9,7 +9,6 @@ import java.util.Map;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** Who may call what, through the real security filter chain. */
@@ -18,16 +17,12 @@ class AccessControlIT extends IntegrationTestBase {
     private static final List<String> ADMIN_GETS = List.of(
             "/api/admin/dashboard", "/api/admin/bookings", "/api/admin/settings", "/api/admin/staff");
 
-    // Signed-out API calls are bounced to the Google sign-in page (oauth2Login's entry point)
-    // rather than answered with 401; either way no data is returned.
-    private static final String LOGIN_PAGE = "http://localhost:3000/staff/login";
-
     @Test
     void signedOutUsersCannotReachStaffOrAdminApis() throws Exception {
         for (String path : ADMIN_GETS) {
-            mvc.perform(get(path)).andExpect(status().isFound()).andExpect(redirectedUrl(LOGIN_PAGE));
+            mvc.perform(get(path)).andExpect(status().isUnauthorized());
         }
-        mvc.perform(get("/api/staff/my-bookings")).andExpect(status().isFound()).andExpect(redirectedUrl(LOGIN_PAGE));
+        mvc.perform(get("/api/staff/my-bookings")).andExpect(status().isUnauthorized());
     }
 
     @Test
@@ -63,13 +58,13 @@ class AccessControlIT extends IntegrationTestBase {
         staffRepository.save(gone);
 
         mvc.perform(get("/api/admin/dashboard").header("Authorization", "Bearer " + token))
-                .andExpect(status().isFound()).andExpect(redirectedUrl(LOGIN_PAGE));
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
     void tamperedTokensAreIgnored() throws Exception {
         mvc.perform(get("/api/admin/dashboard").header("Authorization", "Bearer not.a.jwt"))
-                .andExpect(status().isFound()).andExpect(redirectedUrl(LOGIN_PAGE));
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
