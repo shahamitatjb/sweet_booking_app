@@ -271,6 +271,20 @@ public class AdminApiController {
         }
     }
 
+    @PostMapping("/bookings/delete-all")
+    public ResponseEntity<?> deleteAllBookings(@RequestBody(required = false) Map<String, Object> body,
+                                               HttpServletRequest request) {
+        Staff staff = currentStaff();
+        try {
+            Map<String, Integer> deleted = bookingAdminService.deleteAllBookings(
+                    body == null ? null : str(body, "confirm"), staff, request);
+            return ResponseEntity.ok(Map.of("ok", true, "deleted", deleted));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            log.warn("[BOOKING] delete-all rejected for {}: {}", staff.getEmail(), e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
     @GetMapping("/staff")
     public List<Map<String, Object>> staffList() {
         List<Staff> all = new ArrayList<>(staffRepository.findAll());
