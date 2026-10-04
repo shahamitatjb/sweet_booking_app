@@ -142,6 +142,17 @@ public class StaffApiController {
         }
     }
 
+    @GetMapping(value = "/receipts/{bookingId}/qr.png", produces = "image/png")
+    public ResponseEntity<byte[]> receiptQr(@PathVariable String bookingId) {
+        try {
+            return ResponseEntity.ok()
+                    .header("Cache-Control", "private, max-age=86400")
+                    .body(receiptService.qrPng(bookingId));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
     @GetMapping("/receipts/{bookingId}/pdf")
     public ResponseEntity<byte[]> receiptPdf(@PathVariable String bookingId) {
         byte[] pdf = receiptService.pdfForBookingId(bookingId);
