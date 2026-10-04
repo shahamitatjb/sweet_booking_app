@@ -50,7 +50,7 @@ class OnlineBookingFlowIT extends IntegrationTestBase {
         postJson("/api/public/payments/verify", checkoutSuccess(order, "pay_IT1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.bookingId").value("JB-0001"))
-                .andExpect(jsonPath("$.receiptUrl").value("/receipt/JB-0001"));
+                .andExpect(jsonPath("$.receiptUrl").value("/receipt/JB-0001?t=" + receiptToken("JB-0001")));
 
         assertThat(orderStatus(orderId)).isEqualTo("paid");
         assertThat(bookingCounter()).isEqualTo(1);
@@ -62,12 +62,13 @@ class OnlineBookingFlowIT extends IntegrationTestBase {
                 + "AND to_address = 'ravi@example.com'", Integer.class)).isEqualTo(1);
         assertThat(auditActions()).contains("online_order_created", "online_booking_paid");
 
-        mvc.perform(get("/api/public/receipts/JB-0001"))
+        String t = receiptToken("JB-0001");
+        mvc.perform(get("/api/public/receipts/JB-0001").param("t", t))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.bookingId").value("JB-0001"))
                 .andExpect(jsonPath("$.totalAmount").value(80000))
                 .andExpect(jsonPath("$.status").value("paid"));
-        byte[] png = mvc.perform(get("/api/public/receipts/JB-0001/qr.png"))
+        byte[] png = mvc.perform(get("/api/public/receipts/JB-0001/qr.png").param("t", t))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
         assertThat(png).startsWith((byte) 0x89, (byte) 'P', (byte) 'N', (byte) 'G');
     }

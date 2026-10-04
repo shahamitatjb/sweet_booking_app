@@ -33,7 +33,8 @@ public class OutboxWorker {
             try {
                 if ("receipt_pdf".equals(row.getKind())) {
                     byte[] pdf = receiptService.pdfForBookingId(row.getBookingId());
-                    String body = "Thank you for your booking. Receipt " + row.getBookingId() + ".";
+                    String body = "Thank you for your booking. Receipt " + row.getBookingId() + ".\n\n"
+                            + "View your receipt online: " + receiptService.receiptUrl(row.getBookingId());
                     emailService.sendWithPdf(row.getToAddress(), "Your Diwali booking " + row.getBookingId(), body, pdf);
                 } else {
                     emailService.sendSimple(row.getToAddress(),
