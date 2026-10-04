@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AppHeader } from '../../../components/AppHeader';
 
@@ -21,24 +21,23 @@ type Receipt = {
   terms: string;
   thankYou: string;
   title: string;
-  verifyUrl: string;
-  signature: string;
   status: string;
   voidReason: string | null;
+  transactionRef: string | null;
+  transactionRefPending: boolean;
 };
 
-const PRINT_DELAY_MS = 400;
+const TRANSACTION_REF_PENDING = 'Pending — will be updated shortly';
 
 export default function ReceiptPage({ params }: { params: { id: string } }) {
   const { id } = params;
   const [data, setData] = useState<Receipt | null>(null);
   const [error, setError] = useState('');
-  const [flags, setFlags] = useState({ autoPrint: false, fromCounter: false });
-  const printed = useRef(false);
+  const [flags, setFlags] = useState({ fromCounter: false, justPaid: false });
 
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
-    setFlags({ autoPrint: q.get('print') === '1', fromCounter: q.get('from') === 'counter' });
+    setFlags({ fromCounter: q.get('from') === 'counter', justPaid: q.get('paid') === '1' });
   }, []);
 
   useEffect(() => {
@@ -47,14 +46,6 @@ export default function ReceiptPage({ params }: { params: { id: string } }) {
       .then((j) => (j.error ? setError(j.error) : setData(j)))
       .catch((e) => setError(String(e)));
   }, [id]);
-
-  // Counter flow lands here with ?print=1: open the print dialog once the receipt has rendered.
-  useEffect(() => {
-    if (!data || !flags.autoPrint || printed.current) return;
-    printed.current = true;
-    const timer = window.setTimeout(() => window.print(), PRINT_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [data, flags.autoPrint]);
 
   if (error) {
     return (
@@ -81,6 +72,11 @@ export default function ReceiptPage({ params }: { params: { id: string } }) {
             <div className="id">{data.bookingId}</div>
           </div>
         )}
+        {flags.justPaid && data.transactionRefPending && (
+          <div className="card no-print" role="status">
+            Payment received. The bank transaction reference will be added to this receipt shortly.
+          </div>
+        )}
         <div className="receipt-frame">
           <div className="print-page">
             <h1>{data.title}</h1>
@@ -102,6 +98,12 @@ export default function ReceiptPage({ params }: { params: { id: string } }) {
               <strong>Booked at (IST):</strong> {data.bookedAtIst}
               <br />
               <strong>Channel:</strong> {data.channel} · <strong>Payment:</strong> {data.paymentMode || '—'}
+              {(data.transactionRef || data.transactionRefPending) && (
+                <>
+                  <br />
+                  <strong>Transaction ref:</strong> {data.transactionRef || TRANSACTION_REF_PENDING}
+                </>
+              )}
               {data.takenByName && (
                 <>
                   <br />
@@ -143,11 +145,6 @@ export default function ReceiptPage({ params }: { params: { id: string } }) {
               <br />
               <strong>Total:</strong> ₹{(data.totalAmount / 100).toFixed(2)}
             </p>
-            <p className="muted">
-              Verify: {data.verifyUrl}
-              <br />
-              Signature: {data.signature}
-            </p>
             <pre className="muted" style={{ whiteSpace: 'pre-wrap' }}>
               {data.terms}
             </pre>
@@ -156,7 +153,7 @@ export default function ReceiptPage({ params }: { params: { id: string } }) {
         </div>
         <div className="print-actions no-print">
           <button type="button" className="btn" onClick={() => window.print()}>
-            Print (14.9 × 21 cm)
+            Print
           </button>
           {flags.fromCounter ? (
             <Link className="btn gold" href="/staff/counter">

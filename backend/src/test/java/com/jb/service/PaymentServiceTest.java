@@ -25,13 +25,14 @@ class PaymentServiceTest {
 
     private final OrderRepository orders = mock(OrderRepository.class);
     private final BookingFinalizeService finalize = mock(BookingFinalizeService.class);
-    private final RazorpayService razorpay = new RazorpayService();
+    private final RazorpayService razorpay = spy(new RazorpayService());
     private final PaymentService service = new PaymentService(orders, finalize, razorpay);
 
     PaymentServiceTest() {
         ReflectionTestUtils.setField(razorpay, "keyId", "rzp_test_key");
         ReflectionTestUtils.setField(razorpay, "keySecret", KEY_SECRET);
         ReflectionTestUtils.setField(razorpay, "webhookSecret", WEBHOOK_SECRET);
+        doReturn(Optional.empty()).when(razorpay).fetchBankReference(any());
     }
 
     private static Order awaitingOrder() {
@@ -57,10 +58,35 @@ class PaymentServiceTest {
         when(finalize.finalizeOnline(ORDER_ID, "pay_123", 45000)).thenReturn(booking());
         String sig = hmacHex(KEY_SECRET, "order_abc|pay_123");
 
-        Booking b = service.verifyAndFinalize(ORDER_ID, "order_abc", "pay_123", sig);
+        var confirmed = service.verifyAndFinalize(ORDER_ID, "order_abc", "pay_123", sig);
 
-        assertThat(b.getBookingId()).isEqualTo("JB-0007");
+        assertThat(confirmed.booking().getBookingId()).isEqualTo("JB-0007");
         verify(finalize).finalizeOnline(ORDER_ID, "pay_123", 45000);
+    }
+
+    @Test
+    void fetchedBankReferenceIsStoredAndNotPending() throws Exception {
+        when(orders.findById(ORDER_ID)).thenReturn(Optional.of(awaitingOrder()));
+        when(finalize.finalizeOnline(ORDER_ID, "pay_123", 45000)).thenReturn(booking());
+        doReturn(Optional.of("412345678901")).when(razorpay).fetchBankReference("pay_123");
+        when(finalize.recordBankReference(ORDER_ID, "412345678901")).thenReturn(true);
+
+        var confirmed = service.verifyAndFinalize(ORDER_ID, "order_abc", "pay_123", hmacHex(KEY_SECRET, "order_abc|pay_123"));
+
+        assertThat(confirmed.bankReferencePending()).isFalse();
+        verify(finalize).recordBankReference(ORDER_ID, "412345678901");
+    }
+
+    @Test
+    void failedBankReferenceFetchStillIssuesTheBookingAndMarksItPending() throws Exception {
+        when(orders.findById(ORDER_ID)).thenReturn(Optional.of(awaitingOrder()));
+        when(finalize.finalizeOnline(ORDER_ID, "pay_123", 45000)).thenReturn(booking());
+        when(finalize.recordBankReference(ORDER_ID, null)).thenReturn(false);
+
+        var confirmed = service.verifyAndFinalize(ORDER_ID, "order_abc", "pay_123", hmacHex(KEY_SECRET, "order_abc|pay_123"));
+
+        assertThat(confirmed.booking().getBookingId()).isEqualTo("JB-0007");
+        assertThat(confirmed.bankReferencePending()).isTrue();
     }
 
     @Test
@@ -109,6 +135,18 @@ class PaymentServiceTest {
 
         assertThat(result.outcome()).isEqualTo(PaymentService.WebhookOutcome.FINALIZED);
         assertThat(result.bookingId()).isEqualTo("JB-0007");
+    }
+
+    @Test
+    void capturedWebhookStoresTheBankReferenceFromAcquirerData() throws Exception {
+        when(orders.findByGatewayOrderId("order_abc")).thenReturn(Optional.of(awaitingOrder()));
+        when(finalize.finalizeOnline(ORDER_ID, "pay_123", 45000)).thenReturn(booking());
+        String withRrn = CAPTURED.replace("\"status\":\"captured\"",
+                "\"status\":\"captured\",\"acquirer_data\":{\"rrn\":\"412345678901\"}");
+
+        service.handleWebhook(withRrn, hmacHex(WEBHOOK_SECRET, withRrn));
+
+        verify(finalize).recordBankReference(ORDER_ID, "412345678901");
     }
 
     @Test

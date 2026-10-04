@@ -43,6 +43,26 @@ public class BookingFinalizeService {
         return finalize(orderId, Order.PaymentMethod.upi, null, amountPaise, upiRef, staffId);
     }
 
+    /**
+     * Stores the bank reference of an online payment once it is known (Razorpay fetch or webhook).
+     * Never overwrites one already stored. Returns true when the order has a reference afterwards.
+     */
+    @Transactional
+    public boolean recordBankReference(UUID orderId, String bankReference) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("Order not found: " + orderId));
+        if (order.getUpiReference() != null && !order.getUpiReference().isBlank()) {
+            return true;
+        }
+        if (bankReference == null || bankReference.isBlank()) {
+            return false;
+        }
+        order.setUpiReference(bankReference);
+        orderRepository.save(order);
+        log.info("[PAY] bank reference stored for orderId={}: {}", orderId, bankReference);
+        return true;
+    }
+
     @Transactional
     public Booking finalize(UUID orderId,
                             Order.PaymentMethod method,

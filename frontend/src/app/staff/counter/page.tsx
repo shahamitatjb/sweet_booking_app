@@ -19,6 +19,8 @@ type Errors = Partial<Record<FieldName, string>>;
 const EMPTY_FORM: CustomerForm = { name: '', mobile: '', email: '', address: '', pinCode: '' };
 const DEFAULT_LIMITS: Limits = { maxPerItem: 20, maxTotal: 50 };
 const COUNTER_FIELDS: Array<keyof CustomerForm> = ['name', 'mobile', 'address', 'pinCode'];
+const UTR_PATTERN = /^\d{12}$/;
+const UTR_ERROR = 'Enter the 12-digit UPI transaction ID (UTR)';
 
 export default function CounterPage() {
   const router = useRouter();
@@ -29,6 +31,8 @@ export default function CounterPage() {
   const [form, setForm] = useState<CustomerForm>(EMPTY_FORM);
   const [errors, setErrors] = useState<Errors>({});
   const [method, setMethod] = useState<Method>('cash');
+  const [upiReference, setUpiReference] = useState('');
+  const [upiRefError, setUpiRefError] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -50,7 +54,8 @@ export default function CounterPage() {
   const qtyError = validateQuantities(qty, limits);
   const customerErrors = validateCustomer(form, fieldOpts);
   const customerValid = COUNTER_FIELDS.every((f) => !customerErrors[f]);
-  const canSubmit = customerValid && !qtyError && !busy;
+  const upiRefValid = method !== 'upi' || UTR_PATTERN.test(upiReference);
+  const canSubmit = customerValid && !qtyError && upiRefValid && !busy;
 
   function setField(field: keyof CustomerForm, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -75,16 +80,18 @@ export default function CounterPage() {
           .filter(([, q]) => q > 0)
           .map(([itemId, quantity]) => ({ itemId: Number(itemId), quantity })),
         cashReceivedPaise: amount,
-        upiReference: method === 'upi' ? 'UPI-STAFF-CONFIRMED' : undefined,
+        upiReference: method === 'upi' ? upiReference : undefined,
       };
       const data = await api<{ bookingId: string }>('/api/staff/counter/bookings', {
         method: 'POST',
         body: JSON.stringify(payload),
       });
-      router.push(`/receipt/${data.bookingId}?print=1&from=counter`);
+      router.push(`/receipt/${data.bookingId}?from=counter`);
     } catch (e) {
       const err = e as ApiError;
-      if (err instanceof ApiError && err.field && err.field !== 'items') {
+      if (err instanceof ApiError && err.field === 'upiReference') {
+        setUpiRefError(err.message);
+      } else if (err instanceof ApiError && err.field && err.field !== 'items') {
         setErrors((prev) => ({ ...prev, [err.field as FieldName]: err.message }));
       } else {
         setError(err.message || String(e));
@@ -139,6 +146,23 @@ export default function CounterPage() {
             <small>staff-confirmed</small>
           </button>
         </div>
+        {method === 'upi' && (
+          <Field id="upiReference" label="UPI transaction ID (UTR)" error={upiRefError || null}>
+            <input
+              id="upiReference"
+              inputMode="numeric"
+              maxLength={12}
+              value={upiReference}
+              onChange={(e) => {
+                const v = e.target.value.replace(/\D/g, '');
+                setUpiReference(v);
+                if (upiRefError) setUpiRefError(UTR_PATTERN.test(v) ? '' : UTR_ERROR);
+              }}
+              onBlur={(e) => setUpiRefError(UTR_PATTERN.test(e.target.value) ? '' : UTR_ERROR)}
+              aria-invalid={!!upiRefError}
+            />
+          </Field>
+        )}
       </section>
 
       <section className="card">

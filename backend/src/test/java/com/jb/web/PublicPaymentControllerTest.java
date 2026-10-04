@@ -28,12 +28,13 @@ class PublicPaymentControllerTest {
     @Test
     void verifiedPaymentReturnsBookingIdAndReceiptUrl() throws Exception {
         when(payments.verifyAndFinalize(ORDER_ID, "order_abc", "pay_123", "sig"))
-                .thenReturn(Booking.builder().bookingId("JB-0007").build());
+                .thenReturn(new PaymentService.Confirmed(Booking.builder().bookingId("JB-0007").build(), true));
 
         mvc.perform(post("/api/public/payments/verify").contentType(MediaType.APPLICATION_JSON).content(body()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.bookingId").value("JB-0007"))
-                .andExpect(jsonPath("$.receiptUrl").value("/receipt/JB-0007"));
+                .andExpect(jsonPath("$.receiptUrl").value("/receipt/JB-0007"))
+                .andExpect(jsonPath("$.transactionRefPending").value(true));
     }
 
     @Test

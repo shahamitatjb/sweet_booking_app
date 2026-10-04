@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -78,6 +79,49 @@ public class RazorpayService {
             log.error("[PAY] payment signature verify error for gatewayOrderId={}", gatewayOrderId, e);
             return false;
         }
+    }
+
+    /**
+     * Bank-side reference of a payment, for reconciling with the bank statement. Fetched from Razorpay
+     * because the checkout callback only carries the payment id. Empty when the call fails or Razorpay
+     * has no reference yet; the payment.captured webhook fills it in later.
+     */
+    public Optional<String> fetchBankReference(String paymentId) {
+        if (!enabled()) {
+            return Optional.empty();
+        }
+        try {
+            com.razorpay.RazorpayClient client = new com.razorpay.RazorpayClient(keyId, keySecret);
+            com.razorpay.Payment payment = client.payments.fetch(paymentId);
+            Optional<String> ref = bankReference(payment.toJson());
+            log.info("[PAY] bank reference fetched for paymentId={}: {}", paymentId, ref.orElse("(none yet)"));
+            return ref;
+        } catch (Exception e) {
+            log.warn("[PAY] bank reference fetch FAILED for paymentId={} — webhook will fill it in: {}",
+                    paymentId, e.toString());
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Reads the bank reference from a Razorpay payment entity: the RRN/UTR for UPI (and most cards),
+     * the bank transaction id for netbanking, the wallet transaction id, or else the card auth code.
+     */
+    public static Optional<String> bankReference(JSONObject paymentEntity) {
+        if (paymentEntity == null) {
+            return Optional.empty();
+        }
+        JSONObject acquirer = paymentEntity.optJSONObject("acquirer_data");
+        if (acquirer == null) {
+            return Optional.empty();
+        }
+        for (String key : new String[] {"rrn", "bank_transaction_id", "transaction_id", "auth_code"}) {
+            String v = acquirer.isNull(key) ? "" : acquirer.optString(key, "").trim();
+            if (!v.isEmpty()) {
+                return Optional.of(v);
+            }
+        }
+        return Optional.empty();
     }
 
     public boolean verifyWebhookSignature(String body, String signatureHeader) {

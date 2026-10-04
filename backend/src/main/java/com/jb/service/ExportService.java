@@ -72,7 +72,7 @@ public class ExportService {
             String[] cols = {
                     "Booking ID", "Booked at (IST)", "Name", "Mobile", "Address", "Pin",
                     "Total packets", "Total kg", "Amount (INR)", "Channel", "Payment mode",
-                    "Taken by", "Handed over"
+                    "Bank transaction ref", "Taken by", "Handed over"
             };
             for (int i = 0; i < cols.length; i++) header.createCell(i).setCellValue(cols[i]);
             int r = 1;
@@ -91,8 +91,9 @@ public class ExportService {
                 row.createCell(8).setCellValue(view.totalAmount() / 100.0);
                 row.createCell(9).setCellValue(view.channel());
                 row.createCell(10).setCellValue(view.paymentMode() == null ? "" : view.paymentMode());
-                row.createCell(11).setCellValue(view.takenBy() == null ? "" : view.takenBy());
-                row.createCell(12).setCellValue("");
+                row.createCell(11).setCellValue(view.transactionRef() == null ? "" : view.transactionRef());
+                row.createCell(12).setCellValue(view.takenBy() == null ? "" : view.takenBy());
+                row.createCell(13).setCellValue("");
             }
             wb.write(bos);
             return bos.toByteArray();
@@ -107,6 +108,7 @@ public class ExportService {
 
     public record ExportRow(
             String bookingId, String bookedAtIst, String name, String mobile, String address, String pin,
-            int totalPackets, double totalKg, int totalAmount, String channel, String paymentMode, String takenBy
+            int totalPackets, double totalKg, int totalAmount, String channel, String paymentMode,
+            String transactionRef, String takenBy
     ) {}
 }

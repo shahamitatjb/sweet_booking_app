@@ -30,8 +30,11 @@ public class PaymentService {
         public static WebhookResult finalized(String bookingId) { return new WebhookResult(WebhookOutcome.FINALIZED, bookingId, null); }
     }
 
+    /** {@code bankReferencePending}: the bank reference could not be fetched yet; the webhook fills it in. */
+    public record Confirmed(Booking booking, boolean bankReferencePending) {}
+
     /** Browser callback: the three fields Razorpay Checkout hands back after a successful payment. */
-    public Booking verifyAndFinalize(UUID orderId, String gatewayOrderId, String paymentId, String signature) {
+    public Confirmed verifyAndFinalize(UUID orderId, String gatewayOrderId, String paymentId, String signature) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new IllegalArgumentException("Order not found"));
         if (order.getGatewayOrderId() == null || !order.getGatewayOrderId().equals(gatewayOrderId)) {
@@ -44,7 +47,16 @@ public class PaymentService {
             throw new IllegalArgumentException("Invalid payment signature");
         }
         log.info("[PAY] verify OK for orderId={} paymentId={}; finalising", orderId, paymentId);
-        return finalizeService.finalizeOnline(orderId, paymentId, order.getTotalAmount());
+        Booking booking = finalizeService.finalizeOnline(orderId, paymentId, order.getTotalAmount());
+        boolean hasRef = false;
+        try {
+            hasRef = finalizeService.recordBankReference(orderId,
+                    razorpayService.fetchBankReference(paymentId).orElse(null));
+        } catch (RuntimeException e) {
+            // The booking is already issued; a missing reference must not fail the confirmation.
+            log.warn("[PAY] bank reference not stored for orderId={}: {}", orderId, e.toString());
+        }
+        return new Confirmed(booking, !hasRef);
     }
 
     /** Webhook: signature first, then only payment.captured for an order we know. */
@@ -66,6 +78,11 @@ public class PaymentService {
         }
         try {
             Booking booking = finalizeService.finalizeOnline(order.get().getId(), p.paymentId(), p.amountPaise());
+            try {
+                finalizeService.recordBankReference(order.get().getId(), p.bankReference());
+            } catch (RuntimeException e) {
+                log.warn("[PAY] webhook bank reference not stored for orderId={}: {}", order.get().getId(), e.toString());
+            }
             log.info("[PAY] webhook finalised orderId={} -> {}", order.get().getId(), booking.getBookingId());
             return WebhookResult.finalized(booking.getBookingId());
         } catch (IllegalArgumentException | IllegalStateException e) {

@@ -178,6 +178,7 @@ public class AdminApiController {
                     o.getTotalAmount(),
                     o.getChannel().name(),
                     o.getPaymentMethod() == null ? "" : o.getPaymentMethod().name(),
+                    ReceiptService.transactionRef(o),
                     bookedByResolver.bookedBy(o)
             );
         });

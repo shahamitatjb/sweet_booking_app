@@ -169,11 +169,15 @@ export default function BookPage() {
     setError('');
     setInfo(t(lang, 'paymentVerifying'));
     try {
-      const done = await api<{ bookingId: string; receiptUrl: string }>('/api/public/payments/verify', {
-        method: 'POST',
-        body: JSON.stringify({ orderId: pending.orderId, ...pending.result }),
-      });
-      router.push(done.receiptUrl || `/receipt/${done.bookingId}`);
+      const done = await api<{ bookingId: string; receiptUrl: string; transactionRefPending?: boolean }>(
+        '/api/public/payments/verify',
+        {
+          method: 'POST',
+          body: JSON.stringify({ orderId: pending.orderId, ...pending.result }),
+        },
+      );
+      const receiptUrl = done.receiptUrl || `/receipt/${done.bookingId}`;
+      router.push(done.transactionRefPending ? `${receiptUrl}?paid=1` : receiptUrl);
     } catch (e) {
       setInfo('');
       showApiError(e);

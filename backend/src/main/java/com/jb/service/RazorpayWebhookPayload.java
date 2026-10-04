@@ -12,7 +12,8 @@ public final class RazorpayWebhookPayload {
 
     private RazorpayWebhookPayload() {}
 
-    public record CapturedPayment(String paymentId, String gatewayOrderId, int amountPaise) {}
+    /** {@code bankReference} is null when Razorpay sent no acquirer reference. */
+    public record CapturedPayment(String paymentId, String gatewayOrderId, int amountPaise, String bankReference) {}
 
     /** Empty for any event other than payment.captured, and for bodies that cannot be read. */
     public static Optional<CapturedPayment> parseCaptured(String body) {
@@ -23,7 +24,8 @@ public final class RazorpayWebhookPayload {
             }
             JSONObject entity = root.getJSONObject("payload").getJSONObject("payment").getJSONObject("entity");
             return Optional.of(new CapturedPayment(
-                    entity.getString("id"), entity.getString("order_id"), entity.getInt("amount")));
+                    entity.getString("id"), entity.getString("order_id"), entity.getInt("amount"),
+                    RazorpayService.bankReference(entity).orElse(null)));
         } catch (RuntimeException e) {
             log.warn("[PAY] webhook body not understood: {}", e.toString());
             return Optional.empty();

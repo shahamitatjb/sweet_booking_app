@@ -38,11 +38,13 @@ public class PublicPaymentController {
             return ResponseEntity.badRequest().body(Map.of("error", "Invalid payment confirmation"));
         }
         try {
-            Booking booking = paymentService.verifyAndFinalize(
+            PaymentService.Confirmed confirmed = paymentService.verifyAndFinalize(
                     orderId, req.razorpayOrderId(), req.razorpayPaymentId(), req.razorpaySignature());
+            Booking booking = confirmed.booking();
             return ResponseEntity.ok(Map.of(
                     "bookingId", booking.getBookingId(),
-                    "receiptUrl", "/receipt/" + booking.getBookingId()));
+                    "receiptUrl", "/receipt/" + booking.getBookingId(),
+                    "transactionRefPending", confirmed.bankReferencePending()));
         } catch (IllegalArgumentException | IllegalStateException e) {
             log.warn("[PAY] verify failed for orderId={}: {}", orderId, e.getMessage());
             return ResponseEntity.badRequest().body(Map.of("error", GENERIC_FAILURE));
