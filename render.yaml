@@ -11,7 +11,8 @@
 #      (the public site, not the API host).
 #   3. Set FRONTEND_ORIGIN on jb-api to https://<jb-frontend host> and
 #      API_PROXY_TARGET on jb-frontend to the jb-api URL Render shows.
-#   4. Set BOOTSTRAP_ADMIN_EMAILS before the first boot so someone can sign in.
+#   4. shahamitatjb@gmail.com (SUPER_ADMIN) and tudani2009@gmail.com (ADMIN) are created by the
+#      V2 migration. Optionally list more in BOOTSTRAP_SUPER_ADMIN_EMAILS / BOOTSTRAP_ADMIN_EMAILS.
 
 services:
   # Next.js public + staff UI (also proxies /api, /oauth2 and /login/oauth2 to the API)
@@ -69,8 +70,10 @@ services:
         fromDatabase:
           name: jb-db
           property: password
+      - key: BOOTSTRAP_SUPER_ADMIN_EMAILS
+        sync: false        # comma-separated Google emails; added as SUPER_ADMIN on startup if missing
       - key: BOOTSTRAP_ADMIN_EMAILS
-        sync: false        # comma-separated Google emails; applied only to an empty staff table
+        sync: false        # comma-separated Google emails; added as ADMIN on startup if missing
       - key: FRONTEND_ORIGIN
         sync: false        # https://<jb-frontend host>; drives CORS, cookies, OAuth redirect and receipt links
       - key: GOOGLE_CLIENT_ID

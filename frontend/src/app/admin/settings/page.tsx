@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../../lib/format';
 import { AdminShell } from '../../../components/AdminShell';
+import { ROLES, canConfigure } from '../../../lib/roles';
 import { useMe } from '../../../components/useMe';
 import { SignInRequired } from '../../../components/SignInRequired';
 import { Toast, useToast } from '../../../components/Toast';
@@ -116,9 +117,10 @@ export default function AdminSettingsPage() {
     }
   }
 
+  const allowed = canConfigure(me?.role);
   useEffect(() => {
-    loadAll();
-  }, []);
+    if (allowed) loadAll();
+  }, [allowed]);
 
   async function saveSettings() {
     const rows: { key: string; language: string; value: string }[] = [];
@@ -194,6 +196,16 @@ export default function AdminSettingsPage() {
 
   if (me === undefined) return <main className="container muted">Loading…</main>;
   if (!me) return <SignInRequired />;
+  if (!allowed) {
+    return (
+      <AdminShell active="settings" title="Settings" me={me}>
+        <div className="card error" role="alert">
+          <h2>Super Admin only</h2>
+          <p>Settings can only be viewed and changed by a Super Admin. Ask a Super Admin if something needs to change.</p>
+        </div>
+      </AdminShell>
+    );
+  }
 
   return (
     <AdminShell active="settings" title="Settings" me={me}>
@@ -415,8 +427,9 @@ export default function AdminSettingsPage() {
       <section className="card">
         <h2>Staff</h2>
         <p className="muted">
-          Only active staff with an entry here can sign in with Google. Roles: ADMIN sees everything,
-          COUNTER can issue counter bookings.
+          Only active staff with an entry here can sign in with Google. Roles: SUPER_ADMIN sees everything,
+          including this page. ADMIN sees the dashboard and bookings (export, void, counter). TREASURER has
+          the same access plus marking payments reconciled. COUNTER can issue counter bookings.
         </p>
         <div className="table-wrap">
           <table className="data-table">
@@ -452,8 +465,11 @@ export default function AdminSettingsPage() {
                         )
                       }
                     >
-                      <option value="ADMIN">ADMIN</option>
-                      <option value="COUNTER">COUNTER</option>
+                      {ROLES.map((r) => (
+                        <option key={r} value={r}>
+                          {r}
+                        </option>
+                      ))}
                     </select>
                   </td>
                   <td>
@@ -494,8 +510,11 @@ export default function AdminSettingsPage() {
                     value={staffDraft.role}
                     onChange={(e) => setStaffDraft({ ...staffDraft, role: e.target.value })}
                   >
-                    <option value="ADMIN">ADMIN</option>
-                    <option value="COUNTER">COUNTER</option>
+                    {ROLES.map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
                   </select>
                 </td>
                 <td>

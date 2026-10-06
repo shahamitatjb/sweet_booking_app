@@ -14,7 +14,9 @@ INSERT INTO staff (email, name, role, active) VALUES
   ('counter2@example.com', 'Counter Two', 'COUNTER', TRUE);
 
 -- Real staff (Google sign-in allowlist). Only emails with an active row here
--- can log in, after the Google OIDC exchange succeeds.
+-- can log in, after the Google OIDC exchange succeeds. This file runs before Flyway,
+-- so only V1 roles are allowed here: the V2 migration then promotes this account to
+-- SUPER_ADMIN and adds tudani2009@gmail.com as ADMIN.
 INSERT INTO staff (email, name, role, active) VALUES
   ('shahamitatjb@gmail.com', 'Amit Shah', 'ADMIN', TRUE)
 ON CONFLICT (email) DO UPDATE SET active = TRUE, role = EXCLUDED.role, name = EXCLUDED.name;

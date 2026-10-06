@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, type ReactNode } from 'react';
 import { api } from '../lib/format';
+import { canConfigure, canSeeDashboard } from '../lib/roles';
 import { Diya } from './Diya';
 
 export type Me = { email: string; name: string; role: string };
@@ -15,18 +16,20 @@ type Props = {
   children: ReactNode;
 };
 
+const anyone = () => true;
+
 const NAV = [
-  { key: 'home', href: '/', label: 'Home', icon: '⌂', adminOnly: false, mobileOnly: true },
-  { key: 'admin', href: '/admin', label: 'Dashboard', icon: '▦', adminOnly: true, mobileOnly: false },
-  { key: 'counter', href: '/staff/counter', label: 'Counter', icon: '🧾', adminOnly: false, mobileOnly: false },
-  { key: 'settings', href: '/admin/settings', label: 'Settings', icon: '⚙', adminOnly: true, mobileOnly: false },
+  { key: 'home', href: '/', label: 'Home', icon: '⌂', allowed: anyone, mobileOnly: true },
+  { key: 'admin', href: '/admin', label: 'Dashboard', icon: '▦', allowed: canSeeDashboard, mobileOnly: false },
+  { key: 'counter', href: '/staff/counter', label: 'Counter', icon: '🧾', allowed: anyone, mobileOnly: false },
+  { key: 'settings', href: '/admin/settings', label: 'Settings', icon: '⚙', allowed: canConfigure, mobileOnly: false },
 ] as const;
 
 /** Staff chrome: festive top bar with tabs on wide screens and a bottom tab bar on phones. */
 export function AdminShell({ active, title = 'Committee', me, children }: Props) {
   const router = useRouter();
   const [signingOut, setSigningOut] = useState(false);
-  const items = NAV.filter((n) => !n.adminOnly || me?.role === 'ADMIN');
+  const items = NAV.filter((n) => n.allowed(me?.role));
 
   async function signOut() {
     setSigningOut(true);

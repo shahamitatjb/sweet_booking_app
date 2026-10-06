@@ -48,6 +48,17 @@ export async function counterCashBooking(
   return res.bookingId;
 }
 
+/** Issues a counter UPI booking through the API and returns its booking ID. */
+export async function counterUpiBooking(seed: Seed, items: Array<[number, number]>): Promise<string> {
+  const res = await staffPost<{ bookingId: string }>(seed.counter, '/api/staff/counter/bookings', {
+    ...CUSTOMER,
+    paymentMethod: 'upi',
+    upiReference: '123456789012',
+    items: items.map(([itemId, quantity]) => ({ itemId, quantity })),
+  });
+  return res.bookingId;
+}
+
 /** The signed token a receipt's QR code points to (/v/<token>). */
 export async function qrToken(bookingId: string): Promise<string> {
   const { scalar } = await import('./db');

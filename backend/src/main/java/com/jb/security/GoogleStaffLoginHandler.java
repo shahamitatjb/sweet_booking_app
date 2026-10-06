@@ -61,7 +61,7 @@ public class GoogleStaffLoginHandler implements AuthenticationSuccessHandler {
             c.setPath("/");
             c.setMaxAge(60 * 60 * 8);
             response.addCookie(c);
-            String landing = s.getRole() == Staff.Role.ADMIN ? "/admin" : "/staff/counter";
+            String landing = s.getRole().isDashboardRole() ? "/admin" : "/staff/counter";
             log.info("[AUTH] SIGN-IN OK: staffId={} role={} email={} -> {} (jb_token, 8h)",
                     s.getId(), s.getRole(), s.getEmail(), landing);
             // Absolute redirect: the OAuth callback is served by the API on :8080,

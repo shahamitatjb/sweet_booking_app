@@ -24,9 +24,30 @@ test('counter staff cannot use the admin dashboard', async ({ context, page }) =
   await expect(page.locator('.stat-grid')).toHaveCount(0);
 });
 
+for (const role of ['admin', 'treasurer'] as const) {
+  test(`${role}s see the dashboard but Settings is super admin only`, async ({ context, page }) => {
+    await signIn(context, seed[role]);
+    await page.goto('/admin');
+    await expect(page.locator('.stat-grid')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Settings' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Counter' }).first()).toBeVisible();
+
+    await page.goto('/admin/settings');
+    await expect(page.getByRole('heading', { name: 'Super Admin only' })).toBeVisible();
+    await expect(page.getByLabel('Page title')).toHaveCount(0);
+  });
+}
+
+test('super admins see Settings in the navigation', async ({ context, page }) => {
+  await signIn(context, seed.superAdmin);
+  await page.goto('/admin');
+  await expect(page.getByRole('link', { name: 'Settings' }).first()).toBeVisible();
+});
+
 test('a session that expires mid-edit is reported, not shown as saved', async ({ context, page }) => {
-  await signIn(context, seed.admin);
+  await signIn(context, seed.superAdmin);
   await page.goto('/admin/settings');
+  await expect(page.getByLabel('Page title')).toHaveValue('Diwali Sweets Booking');
   await page.getByLabel('Page title').fill('Lost change');
   await context.clearCookies(); // session gone (expired / signed out elsewhere)
 

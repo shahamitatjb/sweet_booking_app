@@ -42,8 +42,10 @@ public class AdminApiController {
         double kg = 0;
         int amount = 0;
         int online = 0, cash = 0, upi = 0;
+        int unreconciled = 0;
         for (Booking b : bookings) {
             Order o = b.getOrder();
+            if (b.getReconciledAt() == null && BookingAdminService.isReconcilable(o)) unreconciled++;
             packets += o.getTotalPackets();
             kg += o.getTotalWeightKg().doubleValue();
             amount += o.getTotalAmount();
@@ -61,6 +63,7 @@ public class AdminApiController {
         out.put("totalWeightKg", kg);
         out.put("totalCollectedPaise", amount);
         out.put("byChannel", byChannel);
+        out.put("unreconciledCount", unreconciled);
         out.put("itemSummary", itemSummary());
         return out;
     }
@@ -117,13 +120,17 @@ public class AdminApiController {
 
     @GetMapping("/bookings")
     public List<Map<String, Object>> bookings(@RequestParam(required = false) String q,
-                                              @RequestParam(defaultValue = "false") boolean voided) {
+                                              @RequestParam(defaultValue = "false") boolean voided,
+                                              @RequestParam(defaultValue = "false") boolean unreconciled) {
         List<Booking> source = voided
                 ? bookingRepository.findAllWithStatus(Order.Status.voided)
                 : bookingRepository.findAllExcludingStatus(Order.Status.voided);
+        Map<Long, String> staffNames = staffNames();
         List<Map<String, Object>> out = new ArrayList<>();
         for (Booking b : source) {
             Order o = b.getOrder();
+            boolean reconcilable = BookingAdminService.isReconcilable(o);
+            if (unreconciled && (!reconcilable || b.getReconciledAt() != null)) continue;
             if (q != null && !q.isBlank()) {
                 String needle = q.toLowerCase();
                 if (!b.getBookingId().toLowerCase().contains(needle)
@@ -146,6 +153,11 @@ public class AdminApiController {
             row.put("takenBy", bookedByResolver.bookedBy(o));
             row.put("status", o.getStatus().name());
             row.put("voidReason", o.getVoidReason() == null ? "" : o.getVoidReason());
+            row.put("reconcilable", reconcilable);
+            row.put("reconciled", b.getReconciledAt() != null);
+            row.put("reconciledAt", b.getReconciledAt() == null ? "" : IST.format(b.getReconciledAt()));
+            row.put("reconciledBy", reconciledByLabel(b, staffNames));
+            row.put("reconcileNote", b.getReconcileNote() == null ? "" : b.getReconcileNote());
             out.add(row);
         }
         return out;
@@ -157,6 +169,7 @@ public class AdminApiController {
         if (body.get("bookingIds") instanceof List<?> list) {
             list.forEach(x -> ids.add(String.valueOf(x)));
         }
+        Map<Long, String> staffNames = staffNames();
         byte[] xlsx = exportService.exportBookingsWithIds(ids, bookingId -> {
             Optional<Booking> ob = bookingRepository.findByBookingId(bookingId);
             if (ob.isEmpty()) return null;
@@ -179,7 +192,11 @@ public class AdminApiController {
                     o.getChannel().name(),
                     o.getPaymentMethod() == null ? "" : o.getPaymentMethod().name(),
                     ReceiptService.transactionRef(o),
-                    bookedByResolver.bookedBy(o)
+                    bookedByResolver.bookedBy(o),
+                    b.getReconciledAt() != null ? "Yes" : BookingAdminService.isReconcilable(o) ? "No" : "N/A",
+                    reconciledByLabel(b, staffNames),
+                    b.getReconciledAt() == null ? "" : IST.format(b.getReconciledAt()),
+                    b.getReconcileNote() == null ? "" : b.getReconcileNote()
             );
         });
         auditService.recordOutsideTx("excel_export", actorEmail(), actorId(), actorRole(),
@@ -272,6 +289,38 @@ public class AdminApiController {
         }
     }
 
+    /** Body: {"reconciled": true|false, "note": "optional"}. Treasurer / super admin only. */
+    @PostMapping("/bookings/{bookingId}/reconcile")
+    public ResponseEntity<?> reconcileBooking(@PathVariable String bookingId,
+                                              @RequestBody(required = false) Map<String, Object> body,
+                                              HttpServletRequest request) {
+        Staff staff = currentStaff();
+        boolean reconciled = body == null || body.get("reconciled") == null
+                || Boolean.parseBoolean(String.valueOf(body.get("reconciled")));
+        try {
+            Booking b = bookingAdminService.setReconciled(bookingId, reconciled,
+                    body == null ? null : str(body, "note"), staff, request);
+            return ResponseEntity.ok(Map.of("ok", true, "bookingId", b.getBookingId(), "reconciled", reconciled));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            log.warn("[BOOKING] reconcile rejected for {}: {}", bookingId, e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /** Bulk mark: {"bookingIds": [...], "note": "optional"}. Returns reconciled and skipped ids. */
+    @PostMapping("/bookings/reconcile")
+    public ResponseEntity<?> reconcileBookings(@RequestBody Map<String, Object> body, HttpServletRequest request) {
+        Staff staff = currentStaff();
+        List<String> ids = new ArrayList<>();
+        if (body.get("bookingIds") instanceof List<?> list) {
+            list.forEach(x -> ids.add(String.valueOf(x)));
+        }
+        if (ids.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Select at least one booking"));
+        }
+        return ResponseEntity.ok(bookingAdminService.reconcileMany(ids, str(body, "note"), staff, request));
+    }
+
     @PostMapping("/bookings/delete-all")
     public ResponseEntity<?> deleteAllBookings(@RequestBody(required = false) Map<String, Object> body,
                                                HttpServletRequest request) {
@@ -316,7 +365,8 @@ public class AdminApiController {
         try {
             role = Staff.Role.valueOf(String.valueOf(body.getOrDefault("role", "COUNTER")).trim().toUpperCase());
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of("error", "Role must be ADMIN or COUNTER"));
+            return ResponseEntity.badRequest().body(Map.of("error",
+                    "Role must be one of " + Arrays.toString(Staff.Role.values())));
         }
         Object activeRaw = body.get("active");
         boolean active = activeRaw == null || Boolean.parseBoolean(String.valueOf(activeRaw));
@@ -342,9 +392,9 @@ public class AdminApiController {
         }
 
         boolean touchesSelf = actor.getId().equals(target.getId());
-        if (touchesSelf && (!active || role != Staff.Role.ADMIN)) {
+        if (touchesSelf && (!active || role != target.getRole())) {
             return ResponseEntity.badRequest().body(Map.of(
-                    "error", "You cannot deactivate your own account or change your own role — ask another admin"));
+                    "error", "You cannot deactivate your own account or change your own role — ask another super admin"));
         }
 
         boolean isNew = target.getId() == null;
@@ -364,6 +414,17 @@ public class AdminApiController {
                 isNew ? "created" : "updated", actor.getEmail(), actor.getId(),
                 target.getEmail(), target.getRole(), target.isActive());
         return ResponseEntity.ok(Map.of("ok", true, "id", target.getId(), "email", target.getEmail()));
+    }
+
+    private Map<Long, String> staffNames() {
+        Map<Long, String> out = new HashMap<>();
+        for (Staff s : staffRepository.findAll()) out.put(s.getId(), BookedByResolver.displayName(s));
+        return out;
+    }
+
+    private static String reconciledByLabel(Booking b, Map<Long, String> staffNames) {
+        if (b.getReconciledAt() == null || b.getReconciledBy() == null) return "";
+        return staffNames.getOrDefault(b.getReconciledBy(), "");
     }
 
     private Staff currentStaff() {

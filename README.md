@@ -68,7 +68,7 @@ The UI tests start a throwaway Postgres on port 5433, the API on 8080 and the si
    Creating the services by hand instead: for `jb-api` choose **Docker**, Dockerfile path
    `./backend/Dockerfile`, Docker build context `./backend`; for `jb-frontend` choose **Node**,
    root directory `frontend`, build `npm ci && npm run build`, start `npm start`.
-4. Fill the `sync: false` env vars on `jb-api`: `BOOTSTRAP_ADMIN_EMAILS`, `FRONTEND_ORIGIN`
+4. Fill the `sync: false` env vars on `jb-api`: `BOOTSTRAP_SUPER_ADMIN_EMAILS` / `BOOTSTRAP_ADMIN_EMAILS` (optional), `FRONTEND_ORIGIN`
    (`https://<jb-frontend host>`), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `EMAIL_FROM`, `RESEND_API_KEY`,
    `RECEIPT_CC_EMAILS`. On `jb-frontend` set `API_PROXY_TARGET` to the `jb-api` URL.
 5. Google Cloud Console → the OAuth client → add the redirect URI
@@ -89,7 +89,8 @@ Postgres expires in 30 days, which is why Neon is used.
 | Razorpay | Trust merchant account + live keys; webhook URL `https://<api>/api/webhooks/razorpay` with events `payment.authorized`, `payment.captured`, `refund.created`, `refund.processed`, `refund.failed`, `payment.dispute.created`; `RAZORPAY_WEBHOOK_SECRET` set (the API refuses to start in production without it) |
 | OTP | Set `OTP_PROVIDER=sms` only after DLT + provider live; until then **email OTP** (admin setting `otp_provider`) |
 | Email | Resend (or similar) + real from-domain; set `RECEIPT_CC_EMAILS` to Amit Shah + Shailesh bhai |
-| Admins | `BOOTSTRAP_ADMIN_EMAILS` only seeds an empty staff table; manage the rest in Admin → Settings |
+| Roles | `SUPER_ADMIN` (everything, incl. Settings), `ADMIN` (dashboard, bookings, export, void, counter), `TREASURER` (same as ADMIN plus marking payments reconciled), `COUNTER` (counter bookings) |
+| Staff | The V2 migration preconfigures shahamitatjb@gmail.com as SUPER_ADMIN and tudani2009@gmail.com as ADMIN. `BOOTSTRAP_SUPER_ADMIN_EMAILS` / `BOOTSTRAP_ADMIN_EMAILS` add missing emails on startup; manage the rest in Settings → Staff (super admin only) |
 | Google | OAuth client; add staff emails via Admin UI or `database/seed.sql` |
 | Catalogue | Admin confirms item list; set booking window; fill Hindi/Gujarati texts |
 | Domain | Optional later; needed for professional email deliverability |
