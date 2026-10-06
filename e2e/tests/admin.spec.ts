@@ -85,13 +85,13 @@ test('a treasurer reconciles a UPI booking, and admins only see the status', asy
   await expect(page.getByText('Unreconciled 1')).toBeVisible();
   const upiRow = page.getByRole('row', { name: /JB-0001/ });
   await expect(upiRow).toContainText('Pending');
-  await expect(page.getByRole('button', { name: 'Reconcile' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Reconcile', exact: true })).toHaveCount(0);
 
   await signIn(context, seed.treasurer);
   await page.goto('/admin');
-  await expect(page.getByRole('row', { name: /JB-0002/ }).getByRole('button', { name: 'Reconcile' })).toHaveCount(0);
+  await expect(page.getByRole('row', { name: /JB-0002/ }).getByRole('button', { name: 'Reconcile', exact: true })).toHaveCount(0);
   page.once('dialog', (d) => d.accept('UTR 123456789012'));
-  await upiRow.getByRole('button', { name: 'Reconcile' }).click();
+  await upiRow.getByRole('button', { name: 'Reconcile', exact: true }).click();
   await expect(page.getByText('JB-0001 reconciled')).toBeVisible();
   await expect(upiRow).toContainText('Tara Treasurer');
   await expect(page.getByText('Unreconciled 0')).toBeVisible();
@@ -109,7 +109,7 @@ test('selected bookings can be reconciled in bulk', async ({ context, page }) =>
   await page.getByLabel('Select all bookings').check();
   page.once('dialog', (d) => d.accept(''));
   await page.getByRole('button', { name: 'Mark reconciled' }).click();
-  await expect(page.getByText('Reconciled 2')).toBeVisible();
+  await expect(page.getByRole('status')).toHaveText('Reconciled 2');
   expect(Number(await scalar('SELECT count(*) FROM bookings WHERE reconciled_at IS NOT NULL'))).toBe(2);
 });
 

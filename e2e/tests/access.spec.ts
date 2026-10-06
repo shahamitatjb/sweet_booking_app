@@ -47,6 +47,7 @@ test('super admins see Settings in the navigation', async ({ context, page }) =>
 test('a session that expires mid-edit is reported, not shown as saved', async ({ context, page }) => {
   await signIn(context, seed.superAdmin);
   await page.goto('/admin/settings');
+  await expect(page.getByLabel('Page title')).toHaveValue('Diwali Sweets Booking');
   await page.getByLabel('Page title').fill('Lost change');
   await context.clearCookies(); // session gone (expired / signed out elsewhere)
 
