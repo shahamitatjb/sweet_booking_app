@@ -15,11 +15,15 @@ export async function withDb<T>(fn: (db: Client) => Promise<T>): Promise<T> {
 export type Seed = {
   ladooId: number;
   barfiId: number;
+  superAdmin: StaffSeed;
   admin: StaffSeed;
+  treasurer: StaffSeed;
   counter: StaffSeed;
 };
 
-export type StaffSeed = { id: number; email: string; name: string; role: 'ADMIN' | 'COUNTER' };
+export type Role = 'SUPER_ADMIN' | 'ADMIN' | 'TREASURER' | 'COUNTER';
+
+export type StaffSeed = { id: number; email: string; name: string; role: Role };
 
 export const DEFAULT_SETTINGS: Record<string, string> = {
   title: 'Diwali Sweets Booking',
@@ -33,7 +37,7 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   otp_provider: 'email',
 };
 
-/** Empties every booking/staff/catalogue table, restores known settings and seeds two items and two staff. */
+/** Empties every booking/staff/catalogue table, restores known settings and seeds two items and one staff member per role. */
 export async function resetAndSeed(settings: Record<string, string> = {}): Promise<Seed> {
   return withDb(async (db) => {
     await db.query(
@@ -52,7 +56,7 @@ export async function resetAndSeed(settings: Record<string, string> = {}): Promi
           [name, pack, pricePaise, kg, sort],
         )
       ).rows[0].id as number;
-    const staff = async (email: string, name: string, role: 'ADMIN' | 'COUNTER'): Promise<StaffSeed> => {
+    const staff = async (email: string, name: string, role: Role): Promise<StaffSeed> => {
       const id = (
         await db.query(`INSERT INTO staff (email, name, role, active) VALUES ($1, $2, $3, true) RETURNING id`, [
           email,
@@ -65,7 +69,9 @@ export async function resetAndSeed(settings: Record<string, string> = {}): Promi
     return {
       ladooId: Number(await item('Besan Ladoo', '500 g', 25000, 0.5, 1)),
       barfiId: Number(await item('Kaju Barfi', '250 g', 30000, 0.25, 2)),
+      superAdmin: await staff('super@jb.test', 'Sunita Super', 'SUPER_ADMIN'),
       admin: await staff('admin@jb.test', 'Asha Admin', 'ADMIN'),
+      treasurer: await staff('treasurer@jb.test', 'Tara Treasurer', 'TREASURER'),
       counter: await staff('counter@jb.test', 'Chetan Counter', 'COUNTER'),
     };
   });

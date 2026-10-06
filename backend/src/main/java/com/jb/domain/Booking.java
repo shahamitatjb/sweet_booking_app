@@ -38,4 +38,14 @@ public class Booking {
 
     @Column(name = "scan_count", nullable = false)
     private int scanCount;
+
+    /** Set when a treasurer has matched the payment against Razorpay / bank statements. */
+    @Column(name = "reconciled_at")
+    private Instant reconciledAt;
+
+    @Column(name = "reconciled_by")
+    private Long reconciledBy;
+
+    @Column(name = "reconcile_note")
+    private String reconcileNote;
 }

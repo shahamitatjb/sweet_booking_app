@@ -15,9 +15,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
-import java.util.UUID;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Admin-only lifecycle operations on a booking. Voiding is a soft delete: the
@@ -70,6 +73,76 @@ public class BookingAdminService {
         log.warn("[BOOKING] voided by staffId={} ({}): {} previousStatus={} amountPaise={} reason=\"{}\"",
                 actor.getId(), actor.getEmail(), booking.getBookingId(), before, order.getTotalAmount(), text);
         return booking;
+    }
+
+    /**
+     * Payments that leave a trail to reconcile against: Razorpay (online) and counter UPI, which
+     * lands in the bank. Counter cash does not, and voided bookings are out of the totals.
+     */
+    public static boolean isReconcilable(Order order) {
+        if (order.getStatus() == Order.Status.voided) return false;
+        return order.getChannel() == Order.Channel.online
+                || order.getPaymentMethod() == Order.PaymentMethod.upi;
+    }
+
+    /** Marks (or un-marks) one booking as reconciled. The note is optional. */
+    @Transactional
+    public Booking setReconciled(String bookingId, boolean reconciled, String note, Staff actor,
+                                 HttpServletRequest request) {
+        Booking booking = bookingRepository.findByBookingId(bookingId)
+                .orElseThrow(() -> new IllegalArgumentException("Booking not found"));
+        Order order = booking.getOrder();
+        if (!isReconcilable(order)) {
+            throw new IllegalStateException(order.getStatus() == Order.Status.voided
+                    ? "Voided bookings cannot be reconciled"
+                    : "Only online and counter UPI payments are reconciled");
+        }
+        String text = note == null || note.isBlank() ? null : note.trim();
+        if (reconciled) {
+            booking.setReconciledAt(Instant.now());
+            booking.setReconciledBy(actor.getId());
+            booking.setReconcileNote(text);
+        } else {
+            booking.setReconciledAt(null);
+            booking.setReconciledBy(null);
+            booking.setReconcileNote(null);
+        }
+        bookingRepository.save(booking);
+
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("bookingId", booking.getBookingId());
+        details.put("amountPaise", order.getTotalAmount());
+        if (text != null && reconciled) details.put("note", text);
+        auditService.record(reconciled ? "booking_reconciled" : "booking_unreconciled",
+                actor.getEmail(), actor.getId(), actor.getRole().name(), details,
+                request.getRemoteAddr(), null);
+        log.info("[BOOKING] {} by staffId={} ({}): {}", reconciled ? "reconciled" : "unreconciled",
+                actor.getId(), actor.getEmail(), booking.getBookingId());
+        return booking;
+    }
+
+    /**
+     * Marks several bookings reconciled with one shared optional note. Already reconciled,
+     * unknown and non-reconcilable bookings are skipped and listed, not failed.
+     */
+    @Transactional
+    public Map<String, Object> reconcileMany(List<String> bookingIds, String note, Staff actor,
+                                             HttpServletRequest request) {
+        List<String> done = new ArrayList<>();
+        List<String> skipped = new ArrayList<>();
+        for (String id : new LinkedHashSet<>(bookingIds)) {
+            Booking b = bookingRepository.findByBookingId(id).orElse(null);
+            if (b == null || b.getReconciledAt() != null || !isReconcilable(b.getOrder())) {
+                skipped.add(id);
+                continue;
+            }
+            setReconciled(id, true, note, actor, request);
+            done.add(id);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("reconciled", done);
+        out.put("skipped", skipped);
+        return out;
     }
 
     /**

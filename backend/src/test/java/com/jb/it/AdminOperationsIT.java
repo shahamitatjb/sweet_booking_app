@@ -89,12 +89,12 @@ class AdminOperationsIT extends IntegrationTestBase {
 
     @Test
     void settingsSaveAndTakeEffectForCustomers() throws Exception {
-        staffPost(admin, "/api/admin/settings", List.of(
+        staffPost(superAdmin, "/api/admin/settings", List.of(
                 Map.of("key", "booking_enabled", "language", "en", "value", "false"),
                 Map.of("key", "title", "language", "en", "value", "Test Title")))
                 .andExpect(status().isOk());
 
-        staffGet(admin, "/api/admin/settings").andExpect(jsonPath("$.title").value("Test Title"));
+        staffGet(superAdmin, "/api/admin/settings").andExpect(jsonPath("$.title").value("Test Title"));
         mvc.perform(get("/api/public/config"))
                 .andExpect(jsonPath("$.title").value("Test Title"))
                 .andExpect(jsonPath("$.bookingEnabled").value(false));
@@ -103,14 +103,14 @@ class AdminOperationsIT extends IntegrationTestBase {
 
     @Test
     void catalogueChangesShowOnTheBookingPage() throws Exception {
-        var id = body(staffPost(admin, "/api/admin/items", Map.of(
+        var id = body(staffPost(superAdmin, "/api/admin/items", Map.of(
                 "nameEn", "Soan Papdi", "packSize", "400 g", "pricePaise", 20000,
                 "weightKg", "0.4", "active", true, "sortOrder", 3))
                 .andExpect(status().isOk())).get("id").asLong();
 
         mvc.perform(get("/api/public/config")).andExpect(jsonPath("$.items.length()").value(3));
 
-        staffPost(admin, "/api/admin/items", Map.of(
+        staffPost(superAdmin, "/api/admin/items", Map.of(
                 "id", id, "nameEn", "Soan Papdi", "packSize", "400 g", "pricePaise", 20000,
                 "weightKg", "0.4", "active", false, "sortOrder", 3))
                 .andExpect(status().isOk());
@@ -119,23 +119,41 @@ class AdminOperationsIT extends IntegrationTestBase {
     }
 
     @Test
-    void staffCanBeAddedButAdminsCannotDemoteThemselves() throws Exception {
-        staffPost(admin, "/api/admin/staff", Map.of("email", "New.Person@JB.test", "role", "COUNTER"))
+    void staffCanBeAddedButSuperAdminsCannotDemoteThemselves() throws Exception {
+        staffPost(superAdmin, "/api/admin/staff", Map.of("email", "New.Person@JB.test", "role", "COUNTER"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.email").value("new.person@jb.test"));
-        staffPost(admin, "/api/admin/staff", Map.of("email", "new.person@jb.test", "role", "COUNTER"))
+        staffPost(superAdmin, "/api/admin/staff", Map.of("email", "new.person@jb.test", "role", "COUNTER"))
                 .andExpect(status().isBadRequest());
-        staffPost(admin, "/api/admin/staff", Map.of("id", admin.getId(), "email", admin.getEmail(),
+        staffPost(superAdmin, "/api/admin/staff", Map.of("id", superAdmin.getId(), "email", superAdmin.getEmail(),
                 "role", "COUNTER", "active", true))
                 .andExpect(status().isBadRequest());
-        staffGet(admin, "/api/admin/staff").andExpect(jsonPath("$.length()").value(3));
+        staffGet(superAdmin, "/api/admin/staff").andExpect(jsonPath("$.length()").value(5));
+    }
+
+    @Test
+    void superAdminsCanGrantSuperAdminAndTreasurerRoles() throws Exception {
+        staffPost(superAdmin, "/api/admin/staff", Map.of("email", "second.super@jb.test", "role", "SUPER_ADMIN"))
+                .andExpect(status().isOk());
+        staffPost(superAdmin, "/api/admin/staff", Map.of("email", "money@jb.test", "role", "treasurer"))
+                .andExpect(status().isOk());
+        staffPost(superAdmin, "/api/admin/staff", Map.of("email", "bad@jb.test", "role", "OWNER"))
+                .andExpect(status().isBadRequest());
+        assertThat(jdbc.queryForObject("SELECT role FROM staff WHERE email = 'second.super@jb.test'", String.class))
+                .isEqualTo("SUPER_ADMIN");
+        assertThat(jdbc.queryForObject("SELECT role FROM staff WHERE email = 'money@jb.test'", String.class))
+                .isEqualTo("TREASURER");
+        // Keeping your own role while editing your own name is fine.
+        staffPost(superAdmin, "/api/admin/staff", Map.of("id", superAdmin.getId(), "email", superAdmin.getEmail(),
+                "name", "Renamed", "role", "SUPER_ADMIN", "active", true))
+                .andExpect(status().isOk());
     }
 
     @Test
     void deleteAllIsRefusedWhileBookingsAreOpen() throws Exception {
         counterCash(ladoo.getId(), 1);
 
-        staffPost(admin, "/api/admin/bookings/delete-all", Map.of("confirm", "DELETE ALL BOOKINGS"))
+        staffPost(superAdmin, "/api/admin/bookings/delete-all", Map.of("confirm", "DELETE ALL BOOKINGS"))
                 .andExpect(status().isBadRequest());
         assertThat(count("bookings")).isEqualTo(1);
     }
@@ -148,9 +166,9 @@ class AdminOperationsIT extends IntegrationTestBase {
         createOnlineOrder(ladoo.getId(), 1); // abandoned checkout
         setSetting("booking_enabled", "false");
 
-        staffPost(admin, "/api/admin/bookings/delete-all", Map.of("confirm", "WRONG"))
+        staffPost(superAdmin, "/api/admin/bookings/delete-all", Map.of("confirm", "WRONG"))
                 .andExpect(status().isBadRequest());
-        staffPost(admin, "/api/admin/bookings/delete-all", Map.of("confirm", "DELETE ALL BOOKINGS"))
+        staffPost(superAdmin, "/api/admin/bookings/delete-all", Map.of("confirm", "DELETE ALL BOOKINGS"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.deleted.bookings").value(2))
                 .andExpect(jsonPath("$.deleted.orders").value(3));
@@ -160,7 +178,7 @@ class AdminOperationsIT extends IntegrationTestBase {
         }
         assertThat(bookingCounter()).isZero();
         assertThat(count("items")).isEqualTo(2);
-        assertThat(count("staff")).isEqualTo(2);
+        assertThat(count("staff")).isEqualTo(4);
         assertThat(auditActions()).contains("counter_booking_issued", "all_bookings_deleted");
 
         setSetting("booking_enabled", "true");

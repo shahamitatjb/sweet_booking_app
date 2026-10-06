@@ -64,6 +64,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
         "jb.otp-provider=dev",
         "jb.email-provider=console",
         "jb.bootstrap-admin-emails=",
+        "jb.bootstrap-super-admin-emails=",
         "jb.booking-enabled-override=",
         "jb.order-limit-per-mobile-per-hour=1000",
         "jb.order-limit-per-ip-per-hour=1000",
@@ -100,7 +101,9 @@ public abstract class IntegrationTestBase {
 
     protected Item ladoo;
     protected Item barfi;
+    protected Staff superAdmin;
     protected Staff admin;
+    protected Staff treasurer;
     protected Staff counter;
 
     @BeforeEach
@@ -118,8 +121,12 @@ public abstract class IntegrationTestBase {
 
         ladoo = itemRepository.save(item("Besan Ladoo", "500 g", 25000, "0.500", 1));
         barfi = itemRepository.save(item("Kaju Barfi", "250 g", 30000, "0.250", 2));
+        superAdmin = staffRepository.save(Staff.builder().email("super@jb.test").name("Sunita Super")
+                .role(Staff.Role.SUPER_ADMIN).active(true).build());
         admin = staffRepository.save(Staff.builder().email("admin@jb.test").name("Asha Admin")
                 .role(Staff.Role.ADMIN).active(true).build());
+        treasurer = staffRepository.save(Staff.builder().email("treasurer@jb.test").name("Tara Treasurer")
+                .role(Staff.Role.TREASURER).active(true).build());
         counter = staffRepository.save(Staff.builder().email("counter@jb.test").name("Chetan Counter")
                 .role(Staff.Role.COUNTER).active(true).build());
 

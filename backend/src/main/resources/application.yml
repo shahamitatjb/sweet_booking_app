@@ -70,7 +70,10 @@ jb:
   order-limit-per-mobile-per-hour: ${ORDER_LIMIT_PER_MOBILE_PER_HOUR:5}
   order-limit-per-ip-per-hour: ${ORDER_LIMIT_PER_IP_PER_HOUR:30}
   booking-enabled-override: ${BOOKING_ENABLED_OVERRIDE:}   # empty = use DB setting
-  bootstrap-admin-emails: ${BOOTSTRAP_ADMIN_EMAILS:}      # comma-separated; used only when the staff table is empty
+  # Comma-separated. On every startup, listed emails missing from the staff table are added
+  # with that role; existing rows are never changed.
+  bootstrap-super-admin-emails: ${BOOTSTRAP_SUPER_ADMIN_EMAILS:}
+  bootstrap-admin-emails: ${BOOTSTRAP_ADMIN_EMAILS:}
 
 logging:
   level:

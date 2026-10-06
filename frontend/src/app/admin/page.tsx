@@ -6,6 +6,7 @@ import { AdminShell } from '../../components/AdminShell';
 import { useMe } from '../../components/useMe';
 import { SignInRequired } from '../../components/SignInRequired';
 import { Toast, useToast } from '../../components/Toast';
+import { canReconcile } from '../../lib/roles';
 
 type Booking = {
   bookingId: string;
@@ -21,6 +22,11 @@ type Booking = {
   takenBy: string;
   status: string;
   voidReason?: string;
+  reconcilable?: boolean;
+  reconciled?: boolean;
+  reconciledAt?: string;
+  reconciledBy?: string;
+  reconcileNote?: string;
 };
 
 type ItemSummaryRow = { name: string; packSize: string; packets: number; amountPaise: number };
@@ -31,6 +37,7 @@ type Dashboard = {
   totalWeightKg: number;
   totalCollectedPaise: number;
   byChannel?: { online: number; counterCash: number; counterUpi: number };
+  unreconciledCount?: number;
   itemSummary?: ItemSummaryRow[];
 };
 
@@ -41,18 +48,22 @@ export default function AdminPage() {
   const [rows, setRows] = useState<Booking[]>([]);
   const [q, setQ] = useState('');
   const [showVoided, setShowVoided] = useState(false);
+  const [showUnreconciled, setShowUnreconciled] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState('');
   const headerCheck = useRef<HTMLInputElement>(null);
 
   function load() {
     api<Dashboard>('/api/admin/dashboard').then(setDash).catch((e) => setError((e as Error).message));
-    api<Booking[]>(`/api/admin/bookings?q=${encodeURIComponent(q)}&voided=${showVoided ? 'true' : 'false'}`)
+    api<Booking[]>(
+      `/api/admin/bookings?q=${encodeURIComponent(q)}&voided=${showVoided ? 'true' : 'false'}` +
+        `&unreconciled=${showUnreconciled ? 'true' : 'false'}`,
+    )
       .then((j) => (Array.isArray(j) ? setRows(j) : setError('Access denied')))
       .catch((e) => setError((e as Error).message));
   }
 
-  useEffect(load, [q, showVoided]);
+  useEffect(load, [q, showVoided, showUnreconciled]);
 
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.bookingId));
   const someSelected = !allSelected && rows.some((r) => selected.has(r.bookingId));
@@ -115,9 +126,55 @@ export default function AdminPage() {
     }
   }
 
+  async function reconcile(id: string) {
+    const note = window.prompt(
+      `Mark ${id} as reconciled?\n\nConfirm the payment appears in the Razorpay settlement or bank statement.\n\nNote (optional, e.g. UTR or settlement ID):`,
+      '',
+    );
+    if (note === null) return;
+    try {
+      await api(`/api/admin/bookings/${id}/reconcile`, { method: 'POST', body: JSON.stringify({ reconciled: true, note }) });
+      show(`${id} reconciled`);
+      load();
+    } catch (e) {
+      show((e as Error).message, 'err');
+    }
+  }
+
+  async function unreconcile(id: string) {
+    if (!window.confirm(`Undo reconciliation of ${id}? Its note will be cleared.`)) return;
+    try {
+      await api(`/api/admin/bookings/${id}/reconcile`, { method: 'POST', body: JSON.stringify({ reconciled: false }) });
+      show(`${id} marked not reconciled`);
+      load();
+    } catch (e) {
+      show((e as Error).message, 'err');
+    }
+  }
+
+  async function reconcileSelected() {
+    const note = window.prompt(
+      `Mark ${selected.size} selected booking${selected.size === 1 ? '' : 's'} as reconciled?\n\nCash, voided and already reconciled bookings are skipped.\n\nNote for all (optional):`,
+      '',
+    );
+    if (note === null) return;
+    try {
+      const res = await api<{ reconciled: string[]; skipped: string[] }>('/api/admin/bookings/reconcile', {
+        method: 'POST',
+        body: JSON.stringify({ bookingIds: Array.from(selected), note }),
+      });
+      show(`Reconciled ${res.reconciled.length}${res.skipped.length ? `, skipped ${res.skipped.length}` : ''}`);
+      setSelected(new Set());
+      load();
+    } catch (e) {
+      show((e as Error).message, 'err');
+    }
+  }
+
   if (me === undefined) return <main className="container muted">Loading…</main>;
   if (!me) return <SignInRequired />;
 
+  const reconciler = canReconcile(me.role);
   const summary = dash?.itemSummary || [];
   const totalSummaryPackets = summary.reduce((a, r) => a + Number(r.packets || 0), 0);
   const totalSummaryPaise = summary.reduce((a, r) => a + Number(r.amountPaise || 0), 0);
@@ -154,6 +211,7 @@ export default function AdminPage() {
             <span className="chip">Online {dash.byChannel?.online ?? 0}</span>
             <span className="chip">Counter cash {dash.byChannel?.counterCash ?? 0}</span>
             <span className="chip">Counter UPI {dash.byChannel?.counterUpi ?? 0}</span>
+            <span className="chip">Unreconciled {dash.unreconciledCount ?? 0}</span>
           </div>
 
           <section className="card">
@@ -203,7 +261,7 @@ export default function AdminPage() {
 
       <section className="card">
         <div className="section-title" style={{ marginTop: 0 }}>
-          <h2>{showVoided ? 'Voided bookings' : 'Bookings'}</h2>
+          <h2>{showVoided ? 'Voided bookings' : showUnreconciled ? 'Unreconciled bookings' : 'Bookings'}</h2>
         </div>
         <div className="toolbar">
           <div className="search">
@@ -214,11 +272,24 @@ export default function AdminPage() {
               {allSelected ? 'Clear selection' : 'Select all'}
             </button>
           )}
+          {!showVoided && (
+            <button
+              type="button"
+              className="btn secondary sm"
+              onClick={() => {
+                setShowUnreconciled((v) => !v);
+                setSelected(new Set());
+              }}
+            >
+              {showUnreconciled ? 'All bookings' : 'Show unreconciled'}
+            </button>
+          )}
           <button
             type="button"
             className="btn secondary sm"
             onClick={() => {
               setShowVoided((v) => !v);
+              setShowUnreconciled(false);
               setSelected(new Set());
             }}
           >
@@ -243,6 +314,7 @@ export default function AdminPage() {
               <th>Mode</th>
               <th>Booked by</th>
               <th>Status</th>
+              <th>Reconciled</th>
               <th></th>
             </tr>
           </thead>
@@ -281,7 +353,31 @@ export default function AdminPage() {
                     <span className="badge ok">{r.status}</span>
                   )}
                 </td>
+                <td data-label="Reconciled">
+                  {r.reconciled ? (
+                    <span
+                      className="badge ok"
+                      title={[r.reconciledBy, r.reconciledAt, r.reconcileNote].filter(Boolean).join(' · ')}
+                    >
+                      ✓ {r.reconciledBy}
+                    </span>
+                  ) : r.reconcilable ? (
+                    <span className="badge">Pending</span>
+                  ) : (
+                    <span className="muted">—</span>
+                  )}
+                </td>
                 <td className="actions">
+                  {reconciler && r.reconcilable && !r.reconciled && (
+                    <button type="button" className="btn ghost sm" onClick={() => reconcile(r.bookingId)}>
+                      Reconcile
+                    </button>
+                  )}
+                  {reconciler && r.reconciled && (
+                    <button type="button" className="btn ghost sm" onClick={() => unreconcile(r.bookingId)}>
+                      Undo reconcile
+                    </button>
+                  )}
                   {!showVoided && r.status !== 'voided' && (
                     <button type="button" className="btn ghost sm" onClick={() => voidBooking(r.bookingId)}>
                       Void
@@ -292,8 +388,12 @@ export default function AdminPage() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={11} className="muted">
-                  {showVoided ? 'No voided bookings.' : 'No bookings match this search.'}
+                <td colSpan={12} className="muted">
+                  {showVoided
+                    ? 'No voided bookings.'
+                    : showUnreconciled
+                      ? 'Nothing left to reconcile.'
+                      : 'No bookings match this search.'}
                 </td>
               </tr>
             )}
@@ -307,6 +407,11 @@ export default function AdminPage() {
           <button type="button" className="btn gold sm" onClick={exportExcel}>
             Export Excel
           </button>
+          {reconciler && (
+            <button type="button" className="btn gold sm" onClick={reconcileSelected}>
+              Mark reconciled
+            </button>
+          )}
           <button type="button" className="btn ghost sm" style={{ color: '#fff' }} onClick={() => setSelected(new Set())}>
             Clear
           </button>

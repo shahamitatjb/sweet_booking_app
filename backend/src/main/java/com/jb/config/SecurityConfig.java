@@ -36,6 +36,9 @@ import java.util.List;
 @EnableMethodSecurity
 @RequiredArgsConstructor
 public class SecurityConfig {
+    private static final String[] ALL_STAFF = {"SUPER_ADMIN", "ADMIN", "TREASURER", "COUNTER"};
+    private static final String[] DASHBOARD = {"SUPER_ADMIN", "ADMIN", "TREASURER"};
+
     private final StaffJwtFilter staffJwtFilter;
     private final GoogleStaffLoginHandler googleStaffLoginHandler;
 
@@ -66,14 +69,23 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/public/**").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/public/**").permitAll()
                 // Full customer details for a scanned booking: committee staff only.
-                .requestMatchers(HttpMethod.GET, "/api/verify/*/staff").hasAnyRole("ADMIN", "COUNTER")
+                .requestMatchers(HttpMethod.GET, "/api/verify/*/staff").hasAnyRole(ALL_STAFF)
                 .requestMatchers(HttpMethod.GET, "/api/verify/**").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/webhooks/**").permitAll()
-                .requestMatchers("/api/staff/**").hasAnyRole("ADMIN", "COUNTER")
+                .requestMatchers("/api/staff/**").hasAnyRole(ALL_STAFF)
                 // The counter screen needs the catalogue, but it is a COUNTER-level job,
-                // not an admin one. Read-only; writes below stay ADMIN-only.
-                .requestMatchers(HttpMethod.GET, "/api/admin/items").hasAnyRole("ADMIN", "COUNTER")
-                .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                // not an admin one. Read-only; writes fall through to SUPER_ADMIN below.
+                .requestMatchers(HttpMethod.GET, "/api/admin/items").hasAnyRole(ALL_STAFF)
+                // Dashboard, bookings, export and void: every role that sees the dashboard.
+                .requestMatchers(HttpMethod.GET, "/api/admin/dashboard", "/api/admin/bookings").hasAnyRole(DASHBOARD)
+                .requestMatchers(HttpMethod.POST, "/api/admin/export", "/api/admin/bookings/*/void").hasAnyRole(DASHBOARD)
+                // Payment reconciliation: treasurers and super admins (others only see the status).
+                .requestMatchers(HttpMethod.POST, "/api/admin/bookings/reconcile", "/api/admin/bookings/*/reconcile")
+                        .hasAnyRole("SUPER_ADMIN", "TREASURER")
+                .requestMatchers(HttpMethod.GET, "/api/admin/audit").hasAnyRole("SUPER_ADMIN", "ADMIN")
+                // Everything else under /api/admin is the Settings page: settings, catalogue
+                // writes, staff and delete-all.
+                .requestMatchers("/api/admin/**").hasRole("SUPER_ADMIN")
                 .anyRequest().authenticated()
         );
         OAuth2AuthorizationRequestResolver resolver = new DefaultOAuth2AuthorizationRequestResolver(clients, "/oauth2/authorization");
